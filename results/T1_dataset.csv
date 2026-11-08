@@ -1,0 +1,9 @@
+item,value
+maps,300.0
+episodes,900.0
+frames,27000.0
+segments_total,434940.0
+segments_dropped_small(<3pts),218636.0
+segments_dropped_impure(<90%),3479.0
+segments_kept,212825.0
+frames_observable_frac,0.686

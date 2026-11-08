@@ -1,0 +1,5 @@
+criterion,value,ci_low,ci_high,pass
+"AC5a: RF-eng near-range (<0.5m) MAE, observable rows, <= 0.10 m",0.013159657730307297,0.011634201869481765,0.0150956967006314,True
+"info: baseline near-range MAE, observable rows",0.014716270087708127,0.012776486976005204,0.01718316740355023,NA
+AC5b: relative near-MAE reduction vs baseline >= 20% and CI low > 0,0.1057749244967312,0.07571338743646541,0.1412846448651216,False
+AC5 overall (a AND b),,,,False

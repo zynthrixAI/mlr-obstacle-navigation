@@ -1,0 +1,6 @@
+Q seed 0: 422s, last-500 success 0.59
+Q seed 1: 314s, last-500 success 0.48
+PPO seed 0: 762s
+PPO seed 2: 763s
+PPO seed 1: 768s
+Q seed 2: 178s, last-500 success 0.58

@@ -1,0 +1,5 @@
+data/frames.csv
+data/segments.csv
+__pycache__/
+*.pyc
+.venv/

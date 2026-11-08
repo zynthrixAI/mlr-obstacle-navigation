@@ -1,0 +1,7 @@
+criterion,value,pass
+PPO success >= 80% (open),0.933,True
+PPO collision <= reactive (open),0.040 vs 0.000,False
+PPO success >= 60% (narrow),0.153,False
+PPO collision <= reactive (narrow),0.173 vs 0.020,False
+PPO success >= 60% (cluttered),0.607,True
+PPO collision <= reactive (cluttered),0.307 vs 0.000,False

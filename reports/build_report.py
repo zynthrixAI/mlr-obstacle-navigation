@@ -1,0 +1,421 @@
+"""Build reports/report.docx. Run from /home/user/mlr-project:
+    /home/user/.venv/bin/python reports/build_report.py
+All numbers come from results/*.csv or reports/discussion.md (inserted verbatim)."""
+import os
+import re
+
+import pandas as pd
+from docx import Document
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RES = os.path.join(ROOT, "results")
+OUT = os.path.join(ROOT, "reports", "report.docx")
+rd = lambda f: pd.read_csv(os.path.join(RES, f))
+
+doc = Document()
+styles = doc.styles
+TABLE_STYLE = "Light Grid Accent 1" if "Light Grid Accent 1" in [s.name for s in styles] else "Table Grid"
+
+
+def set_font(style, size=None, bold=None, color=None):
+    style.font.name = "Calibri"
+    rpr = style.element.get_or_add_rPr()
+    rf = rpr.find(qn("w:rFonts"))
+    if rf is None:
+        rf = rpr.makeelement(qn("w:rFonts"), {})
+        rpr.append(rf)
+    for a in ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia"):
+        rf.set(qn(a), "Calibri")
+    for a in ("w:asciiTheme", "w:hAnsiTheme", "w:cstheme", "w:eastAsiaTheme"):
+        if rf.get(qn(a)) is not None:
+            del rf.attrib[qn(a)]
+    if size:
+        style.font.size = Pt(size)
+    if bold is not None:
+        style.font.bold = bold
+
+
+for nm in ("Normal", "List Bullet", "List Bullet 2", "Caption", "Title", "Subtitle", "Heading 1", "Heading 2", "Heading 3"):
+    set_font(styles[nm])
+styles["Normal"].font.size = Pt(11)
+styles["Normal"].paragraph_format.space_after = Pt(6)
+styles["Caption"].font.size = Pt(9.5)
+styles["Heading 1"].font.size = Pt(16)
+styles["Heading 2"].font.size = Pt(13)
+for sec in doc.sections:
+    sec.left_margin = sec.right_margin = Inches(1)
+    sec.top_margin = sec.bottom_margin = Inches(0.9)
+
+counters = {"fig": 0, "tab": 0, "fig_n": 0}
+
+
+def add_runs(p, text, bold_all=False):
+    """Inline markdown (**bold**) -> runs."""
+    for i, part in enumerate(re.split(r"\*\*", text)):
+        if part:
+            r = p.add_run(part)
+            r.bold = bold_all or (i % 2 == 1)
+    return p
+
+
+def para(text="", style=None, align=None):
+    p = doc.add_paragraph(style=style)
+    add_runs(p, text)
+    if align is not None:
+        p.alignment = align
+    return p
+
+
+def bullet(text, level=1):
+    return para(text, "List Bullet" if level == 1 else "List Bullet 2")
+
+
+def caption(kind, text):
+    counters[kind] += 1
+    label = "Figure" if kind == "fig" else "Table"
+    p = doc.add_paragraph(style="Caption")
+    r = p.add_run(f"{label} {counters[kind]}: ")
+    r.bold = True
+    p.add_run(text)
+    return p
+
+
+def figure(fname, text):
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.keep_with_next = True
+    p.add_run().add_picture(os.path.join(RES, fname), width=Inches(6))
+    c = caption("fig", text)
+    c.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    counters["fig_n"] += 1
+
+
+def table(header, rows, caption_text, size=9, widths=None, bold_rows=()):
+    cp = caption("tab", caption_text)
+    cp.paragraph_format.keep_with_next = True
+    t = doc.add_table(rows=1, cols=len(header))
+    t.style = TABLE_STYLE
+    t.alignment = WD_TABLE_ALIGNMENT.CENTER
+    for i, h in enumerate(header):
+        c = t.rows[0].cells[i]
+        c.text = ""
+        r = c.paragraphs[0].add_run(h)
+        r.bold = True
+        r.font.size = Pt(size)
+    for ri, row in enumerate(rows):
+        cells = t.add_row().cells
+        for i, v in enumerate(row):
+            cells[i].text = ""
+            add_runs(cells[i].paragraphs[0], str(v), bold_all=ri in bold_rows)
+            for r in cells[i].paragraphs[0].runs:
+                r.font.size = Pt(size)
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    for ri_, row in enumerate(t.rows):
+        trPr = row._tr.get_or_add_trPr()
+        cs = OxmlElement("w:cantSplit"); cs.set(qn("w:val"), "true"); trPr.append(cs)
+        if ri_ == 0:
+            th = OxmlElement("w:tblHeader"); th.set(qn("w:val"), "true"); trPr.append(th)
+        for c in row.cells:
+            for p in c.paragraphs:
+                p.paragraph_format.space_after = Pt(0)
+    if widths:
+        t.autofit = False
+        for row in t.rows:
+            for i, w in enumerate(widths):
+                row.cells[i].width = Inches(w)
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
+    return t
+
+
+f3 = lambda x: f"{x:.3f}"
+pm = lambda m, s: f"{m:.3f} ± {s:.3f}" if pd.notna(s) else f"{m:.3f}"
+passfmt = lambda v: {True: "Yes", False: "No"}.get(v, "n/a") if not isinstance(v, str) else ("Yes" if v == "True" else "No" if v == "False" else "n/a")
+
+# ======================================================================= TITLE PAGE
+for _ in range(5):
+    doc.add_paragraph()
+p = doc.add_paragraph(style="Title")
+p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+p.add_run("Intelligent Obstacle Detection and Navigation Analysis for Autonomous Robots Using Machine Learning")
+for line, b in [("Machine Learning for Robotics — Section 9A", True), ("Instructor: Mr. Sudais", False)]:
+    q = para("", align=WD_ALIGN_PARAGRAPH.CENTER)
+    r = q.add_run(line)
+    r.font.size = Pt(14)
+    r.bold = b
+doc.add_paragraph()
+q = para("", align=WD_ALIGN_PARAGRAPH.CENTER)
+q.add_run("Group").bold = True
+for m in ["Syeda Hamna Uraizee (22k-5112)", "Ayesha Wahab (22k-5087)", "Hamdan (22k-5077)"]:
+    para(m, align=WD_ALIGN_PARAGRAPH.CENTER)
+doc.add_paragraph()
+para("8 November 2026", align=WD_ALIGN_PARAGRAPH.CENTER)
+doc.add_page_break()
+
+# ======================================================================= 1 INTRO
+doc.add_heading("1 Introduction & Problem Statement", 1)
+para("Autonomous mobile robots rely on range sensors such as LiDAR and ultrasonic transducers to perceive their surroundings. "
+     "The raw readings are noisy, high-dimensional and partly incomplete (dropouts, limited fields of view), so turning them into "
+     "reliable decisions is a machine-learning problem as much as an engineering one. This project studies four related problems "
+     "on such data: (i) classifying what the sensors see, (ii) estimating the distance to the nearest obstacle, (iii) clustering "
+     "scans into environment types, and (iv) learning navigation policies with reinforcement learning (RL).")
+para("These problems matter because errors in perception or control translate directly into collisions, inefficient paths and unsafe "
+     "behaviour. A robot that mislabels an obstacle, underestimates a distance or follows an over-aggressive policy is a hazard to itself "
+     "and to people around it. We therefore evaluate every model with leakage-safe protocols and metrics that match the task, and we "
+     "report where the models fail as well as where they succeed.")
+
+# ======================================================================= 2 OBJECTIVES
+doc.add_heading("2 Objectives", 1)
+for b in ["Engineer informative features from raw LiDAR, ultrasonic and wall-following sensor data.",
+          "Build and compare classification, regression and clustering models on these features.",
+          "Apply reinforcement learning to robot navigation and compare it with a reactive baseline.",
+          "Analyse the strengths and weaknesses of each model family.",
+          "Use evaluation metrics that are appropriate to each task.",
+          "Recommend suitable approaches for different robotics applications."]:
+    bullet(b)
+
+# ======================================================================= 3 DATA
+doc.add_heading("3 Data", 1)
+doc.add_heading("3.1 Simulator", 2)
+para("All supervised and RL experiments use a custom 2D simulator (sim/). The arena is 8 × 8 m and is built by one of three map "
+     "generators: open (a few boxes and cylinders), narrow (serpentine corridors formed by alternating wall segments) and cluttered "
+     "(many obstacle objects). Each map also contains two small cylindrical targets. The map type is a deterministic function of the map seed.")
+para("The robot carries two sensor suites. A 360-ray LiDAR (maximum range 5 m) is used at full resolution for object segmentation and "
+     "downsampled to 36 rays for frame features and RL. Its noise is Gaussian with σ = 1% · r + 1 cm, with 2% of rays dropped out. "
+     "Eight ultrasonic sensors with 30° cones are spaced 45° apart; each reading is the minimum over the cone, with 3% multiplicative "
+     "noise and 4% dropout. Because cones are 30° wide and spaced 45°, there are 15° gaps between cones.")
+para("Data are collected by a controller that follows the reactive rule (Section 6.4) but takes a uniformly random action with probability "
+     "ε = 0.2. Each of the 300 maps (100 per type) is driven for 3 episodes of 150 steps; a frame is recorded every 5 steps and a "
+     "360-ray scan is segmented every 10 steps. Table 1 summarises the resulting dataset.")
+t1 = rd("T1_dataset.csv")
+names = {"maps": "Maps", "episodes": "Episodes", "frames": "Frames", "segments_total": "Segments (total, before filtering)",
+         "segments_dropped_small(<3pts)": "Segments dropped (fewer than 3 points)",
+         "segments_dropped_impure(<90%)": "Segments dropped (label purity below 90%)", "segments_kept": "Segments kept",
+         "frames_observable_frac": "Fraction of frames whose nearest point lies inside an ultrasonic cone"}
+rows = [[names.get(r["item"], r["item"]), f"{r['value']:,.0f}" if r["value"] > 1 else f3(r["value"])] for _, r in t1.iterrows()]
+table(["Item", "Value"], rows, "Simulated dataset summary (results/T1_dataset.csv).", size=10, widths=[4.6, 1.4])
+
+doc.add_heading("3.2 UCI Wall-Following Robot Navigation data", 2)
+para("As a real-sensor benchmark we use the UCI Wall-Following Robot Navigation dataset in its 4-sensor version (front, left, right and back "
+     "distances; 5,456 rows), recorded on a SCITOS G5 robot by Freire et al. (2009) and licensed CC BY 4.0. The four classes are "
+     "Move-Forward, Slight-Right-Turn, Sharp-Right-Turn and Slight-Left-Turn. The class distribution is imbalanced, so macro-F1 is used.")
+
+# ======================================================================= 4 PROTOCOL
+doc.add_heading("4 Evaluation protocol", 1)
+for b in ["**Grouped cross-validation.** Simulator tasks use GroupKFold(5) grouped by map_seed so that no map appears in both training and test folds. Only out-of-fold predictions are reported.",
+          "**No leakage through preprocessing.** Imputation, scaling and polynomial expansion sit inside scikit-learn Pipelines and are fitted on training rows only.",
+          "**Tuning.** Hyper-parameters are chosen by an inner GroupKFold(3) grid search on the training part of each outer fold, with at most 6 configurations per model.",
+          "**Pre-specified primary model.** Random Forest was designated the primary model before running experiments; all acceptance criteria use it.",
+          "**Uncertainty.** Confidence intervals are obtained by bootstrapping over maps (not rows).",
+          "**Disjoint seed ranges.** Supervised data use map seeds 100000–100299, RL training uses 0–9999 and RL evaluation uses 200000–200149 (50 maps per type); disjointness is asserted in code.",
+          "**UCI data.** Rows are time-ordered, so 5-fold evaluation uses contiguous blocks with a 50-row gap between the test block and the training rows."]:
+    bullet(b)
+para("Three acceptance criteria were fixed in advance:")
+a2 = rd("T2_acceptance.csv").rename(columns={"pass": "ok"})
+a3 = rd("T3_acceptance.csv").rename(columns={"pass": "ok"})
+a5 = rd("T5_acceptance.csv").rename(columns={"pass": "ok"})
+bullet("**AC1 (segment classification):** " + a2.criterion[0].replace("AC1a: ", "(a) ") + "; and " + a2.criterion[1].replace("AC1b: ", "(b) ") + ". AC1 passes only if both hold.")
+bullet("**AC5 (distance regression):** " + a3.criterion[0].replace("AC5a: ", "(a) ") + "; and " + a3.criterion[2].replace("AC5b: ", "(b) ") + ". AC5 passes only if both hold.")
+bullet("**AC8 (RL navigation):** PPO success of at least 80% on open maps and at least 60% on narrow and on cluttered maps (held-out evaluation maps), and a PPO collision rate no higher than the reactive controller in each map type.")
+
+# ======================================================================= 5 FEATURES
+doc.add_heading("5 Feature engineering", 1)
+bullet("**Segment geometry (LiDAR).** Each LiDAR segment (consecutive valid hits with range jumps of at most 0.15 m) is described by point count, angular width, mean/min/std range, chord length, path length, path-to-chord ratio, linearity residual (smallest singular value), circle-fit radius and residual, a bulge indicator and the end-to-end range difference. The raw baseline uses the point count, mean range and 8 resampled ranges.")
+bullet("**Ultrasonic aggregates.** Minimum, mean and standard deviation over the 8 readings; front, side and back minima; number of dropouts; number of readings below 1 m.")
+bullet("**Clustering window features.** For windows of 10 consecutive frames: mean range per LiDAR ray, mean and standard deviation of the per-frame minimum, free-ray fraction, front/left/right/back sector minima and the mean number of range jumps.")
+bullet("**UCI features.** The four raw distances plus minimum, maximum, mean, standard deviation, front–left difference, front/right ratio, left–right difference and causal lag-1 differences of each sensor.")
+
+# ======================================================================= 6 RESULTS
+doc.add_heading("6 Results", 1)
+doc.add_heading("6.1 Classification", 2)
+para("UCI wall-following. Table 2 gives 5-fold blocked-CV results for all six models with raw and engineered features; "
+     "Figure 1 plots macro-F1 and Figure 2 shows the Random Forest confusion matrix.")
+u = rd("uci_summary.csv")
+order = ["Majority", "LogReg", "KNN", "RandomForest", "XGBoost", "MLP"]
+u["o"] = u.model.map(order.index)
+u = u.sort_values(["o", "features"])
+rows = [[r.model, r.features, pm(r.macro_f1_mean, r.macro_f1_std), pm(r.accuracy_mean, r.accuracy_std)] for r in u.itertuples()]
+table(["Model", "Features", "Macro-F1 (mean ± std)", "Accuracy (mean ± std)"], rows,
+      "UCI wall-following classification, blocked 5-fold CV (results/uci_summary.csv).", widths=[1.4, 1.2, 1.8, 1.8])
+figure("uci_f1_bar.png", "UCI macro-F1 by model and feature set.")
+figure("uci_confusion_rf.png", "Random Forest confusion matrix on UCI (out-of-fold).")
+
+para("Simulated LiDAR segments (wall / obstacle / target). Segment results use a uniform 60,000-row subsample of the 212,825 kept segments, "
+     "with folds grouped by map. Table 3 compares models, Table 4 reports the acceptance criteria and Figure 3 shows the confusion matrix.")
+s = rd("T2_segment_classification.csv")
+s["o"] = s.model.map(["Dummy", "LogReg", "KNN", "RandomForest", "XGBoost", "MLP"].index)
+s = s.sort_values(["o", "features"])
+rows = [[r.model + (" (primary)" if r.primary else ""), r.features, pm(r.macro_f1_mean, r.macro_f1_std), pm(r.accuracy_mean, r.accuracy_std),
+         f3(r.recall_wall), f3(r.recall_obstacle), f3(r.recall_target)] for r in s.itertuples()]
+table(["Model", "Features", "Macro-F1", "Accuracy", "Recall wall", "Recall obst.", "Recall target"], rows,
+      "Segment classification on the 60,000-row subsample, GroupKFold(5) by map (results/T2_segment_classification.csv).", size=8.5,
+      widths=[1.3, 0.9, 1.1, 1.1, 0.6, 0.6, 0.6])
+
+
+def acc_rows(df, with_ci=True):
+    out = []
+    for r in df.itertuples():
+        v = "" if pd.isna(r.value) else f3(r.value)
+        ci = f"[{f3(r.ci_low)}, {f3(r.ci_high)}]" if pd.notna(r.ci_low) else ""
+        out.append([r.criterion, v, ci, passfmt(r.ok)])
+    return out
+
+
+table(["Criterion", "Value", "95% CI", "Pass"], acc_rows(a2), "Segment classification acceptance criteria and audit rows (results/T2_acceptance.csv).",
+      size=8.5, widths=[3.6, 0.7, 1.2, 0.5])
+figure("F2_segment_confusion.png", "Segment classification confusion matrix (Random Forest, engineered features).")
+
+doc.add_heading("6.2 Regression", 2)
+para("The regression task estimates the distance to the nearest obstacle from the eight ultrasonic readings only. The baseline is the raw "
+     "minimum ultrasonic reading. Results are reported for all frames and for two strata: frames whose nearest point lies inside an ultrasonic "
+     "cone, and frames whose nearest point lies between cones (the observable = False stratum). “Near-range” MAE is computed on frames with true distance below 0.5 m. "
+     "Table 5 lists all models on all frames, plus the baseline and the Random Forest (primary) on each stratum.")
+g = rd("T3_regression.csv")
+sn = {"all": "all frames", "observable": "nearest point inside a cone", "blind_spot": "nearest point between cones"}
+keep = g[(g.stratum == "all") | g.model.isin(["Baseline(min us)", "RandomForest"])]
+rows, bold = [], []
+for r in keep.itertuples():
+    if r.primary:
+        bold.append(len(rows))
+    rows.append([r.model + (" (primary)" if r.primary else ""), r.features, sn[r.stratum], f3(r.MAE), f3(r.near_MAE), f3(r.R2)])
+table(["Model", "Features", "Stratum", "MAE (m)", "Near-range MAE (m)", "R²"], rows,
+      "Distance regression, out-of-fold (results/T3_regression.csv); primary model in bold.", size=8.5,
+      widths=[1.4, 0.9, 1.7, 0.6, 0.8, 0.6], bold_rows=bold)
+para("Acceptance criteria for AC5 are in Table 6.")
+table(["Criterion", "Value", "95% CI", "Pass"], acc_rows(a3), "Regression acceptance criteria, AC5 (results/T3_acceptance.csv).", size=8.5,
+      widths=[3.6, 0.7, 1.2, 0.5])
+para("A post-hoc analysis (Table 7) isolates the “truly blind” frames, where no cone sees the nearest point, and compares the baseline with "
+     "Random Forest on engineered features.")
+b = rd("T3b_truly_blind.csv")
+sl = {"truly_blind": "truly blind", "seen": "seen by a cone", "between_cones (observable=False)": "nearest point between cones", "all": "all frames"}
+rows = [[sl.get(r.stratum, r.stratum), f"{r.n:,}", f3(r.baseline_mae), f3(r.rf_eng_mae), f3(r.baseline_near_mae), f3(r.rf_eng_near_mae)] for r in b.itertuples()]
+table(["Stratum", "n", "Baseline MAE (m)", "RF-eng MAE (m)", "Baseline near MAE (m)", "RF-eng near MAE (m)"], rows,
+      "Truly blind frames versus other strata (results/T3b_truly_blind.csv).", size=8.5, widths=[1.9, 0.6, 0.9, 0.9, 0.9, 0.9])
+figure("F3_regression_mae_by_bin.png", "Regression MAE by true-distance bin for three strata: nearest point seen by a cone, nearest point between cones (still seen by a cone edge), and truly blind (Table 7). Random Forest on engineered features (300 trees, same GroupKFold-by-map OOF protocol) vs the min-ultrasonic baseline.")
+
+doc.add_heading("6.3 Clustering", 2)
+para("Windowed LiDAR statistics were clustered with K-Means and a Gaussian mixture model (GMM) and compared with the hidden map type using the "
+     "adjusted Rand index (ARI). Table 8 gives internal and external metrics; the reported solution is k = 3 (K-Means) and the BIC-best GMM.")
+c = rd("T4_clustering.csv")
+rows = [[r.algorithm, r.k, f3(r.silhouette), f3(r.db), f3(r.ari), f3(r.nmi), "" if pd.isna(r.bic) else f"{r.bic:,.0f}",
+         "" if pd.isna(r.selected) else str(r.selected).strip()] for r in c.itertuples()]
+table(["Algorithm", "k", "Silhouette", "Davies–Bouldin", "ARI", "NMI", "BIC", "Note"], rows,
+      "Clustering results (results/T4_clustering.csv).", size=8.5, widths=[0.8, 0.3, 0.8, 0.9, 0.6, 0.6, 0.8, 1.7])
+para("Table 9 compares the observed K-Means ARI with a map-level permutation null and a bootstrap over maps.")
+pr = rd("T4_permutation.csv").iloc[0]
+rows = [["Observed ARI (K-Means, k=3)", f3(pr.observed_ari)], ["Null mean", f3(pr.null_mean)], ["Null 99th percentile", f3(pr.null_p99)],
+        ["Null maximum", f3(pr.null_max)], ["Permutation p-value", f3(pr.p_value)], ["Number of permutations", f"{int(pr.n_perm)}"],
+        ["Bootstrap 95% CI for ARI", f"[{f3(pr.boot_ci_low)}, {f3(pr.boot_ci_high)}]"], ["Number of bootstrap resamples", f"{int(pr.n_boot)}"]]
+table(["Quantity", "Value"], rows, "Permutation test and bootstrap for K-Means ARI (results/T4_permutation.csv).", size=10, widths=[3.5, 1.8])
+figure("F4_cluster_pca.png", "Clusters in PCA space.")
+figure("F5_cluster_profiles.png", "Cluster centroid profiles.")
+
+doc.add_heading("6.4 Reinforcement learning", 2)
+para("Three navigation agents are compared on the held-out evaluation maps (50 per map type): a rule-based reactive controller, tabular "
+     "Q-learning and PPO. A uniformly random policy is included as a reference.")
+para("**Environment and reward.** The observation is the 36 LiDAR rays divided by 5 m (dropout mapped to 1.0), the goal distance divided by 10 and the sine and "
+     "cosine of the goal angle (39 dimensions). There are three discrete actions: forward 0.1 m, rotate +15° and rotate −15°. The reward is")
+q = para("", align=WD_ALIGN_PARAGRAPH.CENTER)
+q.add_run("r = 10·(d_goal[t−1] − d_goal[t]) − 0.05 − 0.5·[min_ray < 0.30 m] + 100·[goal] − 100·[collision]").italic = True
+para("An episode ends on reaching the goal (distance below 0.2 m), on collision, or after 400 steps (truncation).")
+para("**Reactive rule.** Using the minimum range in the front sector (±30°), the left sector (30–90°) and the right sector (−30 to −90°): if the front minimum is below 0.5 m, "
+     "turn left when the left minimum is at least the right minimum, otherwise turn right; else if the goal bearing exceeds 15° turn toward the goal; otherwise move forward.")
+para("**Tabular Q-learning.** The state combines 3 sectors (front, left, right) × 3 distance bins (below 0.3 m, 0.3–1.0 m, above 1.0 m) × 8 goal-angle bins, giving 27 × 8 = 216 states. "
+     "Learning rate α = 0.1, discount γ = 0.99, ε decays linearly from 1.0 to 0.05 over the first 70% of 5,000 training episodes.")
+para("**PPO.** Stable-Baselines3 PPO with an MLP policy and default hyper-parameters is trained for 300,000 steps with 3 seeds. Observations and rewards are normalised with VecNormalize during training; "
+     "at evaluation the normalisation statistics are frozen (no updates, raw reward) and the policy acts deterministically.")
+para("Table 10 reports per-agent, per-map-type results (mean ± std over 3 training seeds for Q-learning and PPO; the reactive and random baselines are single deterministic runs, so no std is shown). "
+     "Path ratio is measured on successful episodes only. Table 11 reports AC8.")
+r5 = rd("T5_rl.csv")
+r5["o"] = r5.agent.map(["random", "reactive", "qlearning", "ppo"].index)
+r5["m"] = r5.map_type.map(["open", "narrow", "cluttered"].index)
+r5 = r5.sort_values(["o", "m"])
+an = {"random": "Random", "reactive": "Reactive", "qlearning": "Q-learning", "ppo": "PPO"}
+rows = [[an[r.agent], r.map_type, pm(r.success_mean, r.success_std), pm(r.collision_mean, r.collision_std), pm(r.path_ratio_mean, r.path_ratio_std),
+         pm(r.min_clear_mean, r.min_clear_std), pm(r.near_frac_mean, r.near_frac_std)] for r in r5.itertuples()]
+table(["Agent", "Map type", "Success", "Collision", "Path ratio", "Min clearance (m)", "Near-collision fraction"], rows,
+      "RL evaluation on held-out maps (results/T5_rl.csv).", size=8, widths=[0.8, 0.8, 1.0, 1.0, 1.0, 1.0, 1.0])
+rows = [[r.criterion, r.value, passfmt(r.ok)] for r in a5.itertuples()]
+table(["Criterion", "Value", "Pass"], rows, "RL acceptance criteria, AC8 (results/T5_acceptance.csv).", size=9, widths=[3.8, 1.5, 0.7])
+figure("F6_rl_success.png", "Evaluation success rate by agent and map type.")
+figure("F7_rl_learning.png", "RL learning curves during training.")
+
+# ======================================================================= DISCUSSION (verbatim)
+md = open(os.path.join(ROOT, "reports", "discussion.md"), encoding="utf-8").read().splitlines()
+sections, cur = {}, None
+for ln in md:
+    if ln.startswith("## "):
+        cur = ln[3:].strip()
+        sections[cur] = []
+    elif cur is not None:
+        sections[cur].append(ln)
+
+
+def render_md(lines):
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        if not ln.strip():
+            i += 1
+        elif ln.lstrip().startswith("|"):
+            i += 1  # tables handled separately
+        elif re.match(r"^\s*-\s", ln):
+            lvl = 1 + (len(ln) - len(ln.lstrip())) // 2
+            bullet(re.sub(r"^\s*-\s+", "", ln), min(lvl, 2) if lvl <= 2 else 2)
+            i += 1
+        else:
+            para(ln.strip())
+            i += 1
+
+
+def md_table(lines):
+    tl = [l for l in lines if l.strip().startswith("|")]
+    cells = lambda l: [c.strip() for c in l.strip().strip("|").split("|")]
+    hdr = cells(tl[0])
+    body = [cells(l) for l in tl[2:]]
+    return hdr, body
+
+
+doc.add_heading("7 Discussion", 1)
+render_md(sections["Cross-task findings"])
+doc.add_heading("8 Model suitability", 1)
+suit_key = [k for k in sections if k.startswith("Model-suitability")][0]
+pre = [l for l in sections[suit_key] if not l.strip().startswith("|")]
+render_md(pre)
+hdr, body = md_table(sections[suit_key])
+table(hdr, body, "Model-suitability recommendations (from the discussion).", size=8.5, widths=[1.3, 1.6, 1.8, 1.8])
+doc.add_heading("9 Limitations & Future Work", 1)
+render_md(sections["Limitations"])
+
+doc.add_heading("10 Conclusion", 1)
+para("Across the four tasks, tree ensembles were the most reliable default: Random Forest, the pre-specified primary model, was best or close to best on every supervised task, "
+     "and feature engineering helped most where the raw signal was ambiguous. The acceptance criteria for segment classification (AC1) and distance regression (AC5) were not met, "
+     "and the RL criterion (AC8) was only partially met, but each failure was informative: segment classification is limited by what a single 2D scan can observe, "
+     "the raw minimum ultrasonic reading is already an excellent distance estimator and learning pays off mainly on truly blind frames, and PPO learned an aggressive goal-seeking policy that "
+     "succeeds in open and cluttered maps but is unsafe and fails in narrow corridors, where the reactive rule or a planner remains safer. Clustering recovered the environment families, "
+     "though only on synthetic families by design. Model choice should therefore follow the application, with a reactive safety layer around learned navigation, and the vision/fusion, "
+     "curriculum and real-sensor validation steps listed above are the natural next work.")
+
+# ======================================================================= REFERENCES
+doc.add_heading("References", 1)
+for ref in ["Freire, A. L., Barreto, G. A., Veloso, M., & Varela, A. T. (2009). Short-term memory mechanisms in neural network learning of robot navigation tasks: A case study. 6th Latin American Robotics Symposium (LARS).",
+            "UCI Machine Learning Repository: Wall-Following Robot Navigation Data (CC BY 4.0).",
+            "Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. Journal of Machine Learning Research, 12.",
+            "Raffin, A., et al. (2021). Stable-Baselines3: Reliable Reinforcement Learning Implementations. Journal of Machine Learning Research, 22(268).",
+            "Schulman, J., et al. (2017). Proximal Policy Optimization Algorithms. arXiv:1707.06347.",
+            "Watkins, C. J. C. H., & Dayan, P. (1992). Q-learning. Machine Learning, 8."]:
+    para(ref)
+
+doc.save(OUT)
+
+# ======================================================================= SUMMARY
+d = Document(OUT)
+print(f"saved {OUT}")
+print(f"paragraphs={len(d.paragraphs)} tables={len(d.tables)} figures={counters['fig_n']} table_style={TABLE_STYLE}")
+for p in d.paragraphs:
+    if p.style.name.startswith("Heading"):
+        print(("  " if p.style.name == "Heading 2" else "") + p.text)

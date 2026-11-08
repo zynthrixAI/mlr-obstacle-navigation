@@ -1,0 +1,7 @@
+criterion,value,ci_low,ci_high,pass
+AC1a: RF-engineered pooled OOF macro-F1 >= 0.85,0.6353670951826257,0.6257979814385559,0.6437464301623123,False
+AC1b: RF-eng minus LogReg-raw macro-F1 >= +0.05 and bootstrap CI low > 0,0.1953307722856727,0.1858379820787896,0.20626542313710036,True
+AC1 overall (a AND b),,,,False
+audit: fraction of segments with f_n < 4,0.10526666666666666,,,NA
+audit: RF-eng macro-F1 on segments with f_n < 6 (n=15261),0.4806947922343186,,,NA
+audit: RF-eng macro-F1 on segments with f_n >= 6 (n=44739),0.6887331955113386,,,NA
