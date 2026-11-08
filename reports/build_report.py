@@ -162,7 +162,8 @@ para("Autonomous mobile robots rely on range sensors such as LiDAR and ultrasoni
      "The raw readings are noisy, high-dimensional and partly incomplete (dropouts, limited fields of view), so turning them into "
      "reliable decisions is a machine-learning problem as much as an engineering one. This project studies four related problems "
      "on such data: (i) classifying what the sensors see, (ii) estimating the distance to the nearest obstacle, (iii) clustering "
-     "scans into environment types, and (iv) learning navigation policies with reinforcement learning (RL).")
+     "scans into environment types, and (iv) learning navigation policies with reinforcement learning (RL). A further experiment adds a "
+     "simulated camera to test whether appearance resolves the ambiguity left by 2D range data, alone and fused with LiDAR.")
 para("These problems matter because errors in perception or control translate directly into collisions, inefficient paths and unsafe "
      "behaviour. A robot that mislabels an obstacle, underestimates a distance or follows an over-aggressive policy is a hazard to itself "
      "and to people around it. We therefore evaluate every model with leakage-safe protocols and metrics that match the task, and we "
@@ -188,6 +189,11 @@ para("The robot carries two sensor suites. A 360-ray LiDAR (maximum range 5 m) i
      "downsampled to 36 rays for frame features and RL. Its noise is Gaussian with σ = 1% · r + 1 cm, with 2% of rays dropped out. "
      "Eight ultrasonic sensors with 30° cones are spaced 45° apart; each reading is the minimum over the cone, with 3% multiplicative "
      "noise and 4% dropout. Because cones are 30° wide and spaced 45°, there are 15° gaps between cones.")
+para("For the vision experiment (Section 6.5) a simulated pan camera is aimed at each LiDAR segment and renders a 32 × 32 RGB crop "
+     "(camera height 0.3 m, 40° vertical field of view, ±3° horizontal padding around the segment, minimum horizontal field of view 8°). "
+     "Appearance is assigned per object: walls are grey/beige and 1.0 m tall; targets are red–orange, 0.4–0.6 m tall, with a horizontal stripe 60% of the time; "
+     "obstacles have a uniformly random hue and are 0.3–1.2 m tall. Rendering noise comprises distance shading, a global brightness factor of 0.6–1.4, "
+     "a ±5% per-channel tint and Gaussian pixel noise with σ = 8/255. This appearance model was authored by the team, and the designed class overlap is small.")
 para("Data are collected by a controller that follows the reactive rule (Section 6.4) but takes a uniformly random action with probability "
      "ε = 0.2. Each of the 300 maps (100 per type) is driven for 3 episodes of 150 steps; a frame is recorded every 5 steps and a "
      "360-ray scan is segmented every 10 steps. Table 1 summarises the resulting dataset.")
@@ -214,13 +220,17 @@ for b in ["**Grouped cross-validation.** Simulator tasks use GroupKFold(5) group
           "**Disjoint seed ranges.** Supervised data use map seeds 100000–100299, RL training uses 0–9999 and RL evaluation uses 200000–200149 (50 maps per type); disjointness is asserted in code.",
           "**UCI data.** Rows are time-ordered, so 5-fold evaluation uses contiguous blocks with a 50-row gap between the test block and the training rows."]:
     bullet(b)
-para("Three acceptance criteria were fixed in advance:")
+para("Five acceptance criteria were fixed in advance:")
 a2 = rd("T2_acceptance.csv").rename(columns={"pass": "ok"})
 a3 = rd("T3_acceptance.csv").rename(columns={"pass": "ok"})
 a5 = rd("T5_acceptance.csv").rename(columns={"pass": "ok"})
 bullet("**AC1 (segment classification):** " + a2.criterion[0].replace("AC1a: ", "(a) ") + "; and " + a2.criterion[1].replace("AC1b: ", "(b) ") + ". AC1 passes only if both hold.")
 bullet("**AC5 (distance regression):** " + a3.criterion[0].replace("AC5a: ", "(a) ") + "; and " + a3.criterion[2].replace("AC5b: ", "(b) ") + ". AC5 passes only if both hold.")
 bullet("**AC8 (RL navigation):** PPO success of at least 80% on open maps and at least 60% on narrow and on cluttered maps (held-out evaluation maps), and a PPO collision rate no higher than the reactive controller in each map type.")
+bullet("**AC2 (vision):** CNN pooled out-of-fold macro-F1 of at least 0.80.")
+bullet("**AC3 (fusion):** late-fusion macro-F1 minus LiDAR Random Forest macro-F1 of at least +0.02, with the lower bound of the bootstrap 95% CI (resampling maps) above 0.")
+para("The vision task uses the same 60,000-segment subsample and the same GroupKFold(5)-by-map outer folds as segment classification. Within each outer-training set, "
+     "an inner 80/20 split by maps provides the validation data for CNN early stopping and fusion-weight selection.")
 
 # ======================================================================= 5 FEATURES
 doc.add_heading("5 Feature engineering", 1)
@@ -344,6 +354,35 @@ table(["Criterion", "Value", "Pass"], rows, "RL acceptance criteria, AC8 (result
 figure("F6_rl_success.png", "Evaluation success rate by agent and map type.")
 figure("F7_rl_learning.png", "RL learning curves during training.")
 
+doc.add_heading("6.5 Vision and LiDAR–camera fusion", 2)
+v = rd("T6_vision.csv")
+para("This experiment asks whether the camera crops of Section 3.1 resolve the obstacle/target ambiguity that limits LiDAR geometry (Section 6.1). "
+     "Three image-based classifiers (plus a majority-class baseline), the LiDAR Random Forest and their late fusion are evaluated on the same 60,000 segments and outer folds. The **colour-rule baseline** involves no fitting: "
+     "a hand-written three-rule heuristic on the central pixels. **Colour-histogram + logistic regression** is a simple learned baseline. The **CNN** has 3 convolutional "
+     "blocks (16/32/64 filters) and is trained with Adam (learning rate 1e-3), batch size 256, a class-weighted loss and flip/brightness augmentation for at most 8 epochs, "
+     "with early stopping (patience 3) on validation macro-F1; input normalisation uses training maps only. The **LiDAR Random Forest** uses the min_samples_leaf = 5 selected in the "
+     "segment-classification task (Section 6.1) and is fitted on the same inner-training maps. **Late fusion** averages the class probabilities, p = w·p_CNN + (1 − w)·p_RF, "
+     "with w chosen on the validation maps of each fold; the selected weights over the five folds were "
+     + ", ".join(str(x) for x in v.loc[v.model == "Fusion", "fusion_w_per_fold"].iloc[0].split(";")) + ".")
+para("Table 12 gives the results and Table 13 the acceptance criteria.")
+rows = [[r.model, pm(r.macro_f1_mean, r.macro_f1_std), f3(r.macro_f1_pooled), f3(r.accuracy), f3(r.recall_wall), f3(r.recall_obstacle), f3(r.recall_target)]
+        for r in v.itertuples()]
+table(["Model", "Macro-F1 (mean ± std over folds)", "Pooled macro-F1", "Accuracy", "Recall wall", "Recall obst.", "Recall target"], rows,
+      "Vision and fusion results, GroupKFold(5) by map, 60,000 segments (results/T6_vision.csv).", size=8.5, widths=[1.5, 1.3, 0.8, 0.7, 0.6, 0.6, 0.6])
+a6 = rd("T6_acceptance.csv").rename(columns={"pass": "ok"})
+note6 = a6[a6.criterion.str.startswith("note:")]
+a6 = a6[~a6.criterion.str.startswith("note:")]
+table(["Criterion", "Value", "95% CI", "Pass"], acc_rows(a6), "Vision acceptance criteria, AC2 and AC3 (results/T6_acceptance.csv).", size=8.5, widths=[3.6, 0.7, 1.2, 0.5])
+for r in note6.itertuples():
+    para("Note: " + r.criterion[len("note:"):].strip() + ".")
+figure("F9_crop_examples.png", "Example simulated camera crops per class.")
+figure("F8_vision_confusion.png", "Row-normalised confusion matrices: LiDAR RF, CNN, fusion.")
+_g = lambda m, col: v.loc[v.model == m, col].iloc[0]
+para(f"On synthetic crops the CNN reaches macro-F1 {f3(_g('CNN', 'macro_f1_pooled'))} and late fusion {f3(_g('Fusion', 'macro_f1_pooled'))}, "
+     f"against {f3(_g('LiDAR-RF', 'macro_f1_pooled'))} for the LiDAR Random Forest on the same folds. The gap is expected: we designed the appearance model so that colour and a stripe "
+     f"almost fully disambiguate the classes (a hand-written three-rule colour heuristic already reaches {f3(_g('ColourRule (hand, 3 rules)', 'macro_f1_pooled'))}), whereas 2D geometry cannot. "
+     "The result shows that the pipeline, fusion and protocol work, not that a camera would deliver this margin in practice.")
+
 # ======================================================================= DISCUSSION (verbatim)
 md = open(os.path.join(ROOT, "reports", "discussion.md"), encoding="utf-8").read().splitlines()
 sections, cur = {}, None
@@ -392,13 +431,13 @@ doc.add_heading("9 Limitations & Future Work", 1)
 render_md(sections["Limitations"])
 
 doc.add_heading("10 Conclusion", 1)
-para("Across the four tasks, tree ensembles were the most reliable default: Random Forest, the pre-specified primary model, was best or close to best on every supervised task, "
+para("Across the tasks, tree ensembles were the most reliable default: Random Forest, the pre-specified primary model, was best or close to best on every supervised task, "
      "and feature engineering helped most where the raw signal was ambiguous. The acceptance criteria for segment classification (AC1) and distance regression (AC5) were not met, "
      "and the RL criterion (AC8) was only partially met, but each failure was informative: segment classification is limited by what a single 2D scan can observe, "
      "the raw minimum ultrasonic reading is already an excellent distance estimator and learning pays off mainly on truly blind frames, and PPO learned an aggressive goal-seeking policy that "
      "succeeds in open and cluttered maps but is unsafe and fails in narrow corridors, where the reactive rule or a planner remains safer. Clustering recovered the environment families, "
-     "though only on synthetic families by design. Model choice should therefore follow the application, with a reactive safety layer around learned navigation, and the vision/fusion, "
-     "curriculum and real-sensor validation steps listed above are the natural next work.")
+     "though only on synthetic families by design. Model choice should therefore follow the application, with a reactive safety layer around learned navigation, and real-camera validation with learned fusion, "
+     "curriculum learning and real-sensor validation, listed above, are the natural next work.")
 
 # ======================================================================= REFERENCES
 doc.add_heading("References", 1)

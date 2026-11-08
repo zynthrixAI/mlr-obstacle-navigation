@@ -18,7 +18,7 @@ Linear models were competitive only after feature engineering. k-NN was sensitiv
 - **AC1, segment classification (0.85 target; RF reached 0.635):**
   - The miss is about what a single 2D scan can observe. Targets were deliberately small cylinders whose size overlaps the small obstacle cylinders. The confusion matrix (Figure 3) shows that most errors are between obstacle and target, and between short wall fragments and box faces.
   - Short segments (fewer than 6 points) reach only 0.48 macro-F1, against 0.69 for longer ones.
-  - This is a sensing limit, not a modelling failure. Telling these objects apart needs appearance (a camera) or temporal tracking. That justifies the vision/fusion extension we cut from scope.
+  - This is a sensing limit, not a modelling failure. Telling these objects apart needs appearance (a camera) or temporal tracking. We tested the camera route in the vision & fusion experiment (finding 5).
 - **AC5, distance regression (20% improvement over the min-ultrasonic baseline not met; RF achieved 10.6% on observable near-range rows):**
   - With 30° cones at 45° spacing, the nearest point is almost always inside, or within 7.5° of, a cone. So the raw minimum reading is already an excellent estimator (MAE about 2 cm).
   - Learning pays off where the sensor model genuinely fails. On the **truly blind frames** (1.9% of frames, where no cone sees the nearest point), RF cut the baseline MAE from 0.212 m to 0.140 m (−34%), and the near-range MAE from 0.315 m to 0.192 m.
@@ -37,11 +37,19 @@ Linear models were competitive only after feature engineering. k-NN was sensitiv
 - Because our generators produce distinct environment families by design, this shows that the features separate the families. It does not show discovery of naturally occurring structure.
 - Silhouette preferred k=2 (open vs non-open), a reminder that unsupervised "environment types" depend on resolution.
 
+**5. Vision & fusion: a camera resolves the ambiguity in our setting, but the margin is an upper bound.**
+- On the same 60,000 segments and folds, a small CNN on simulated 32×32 camera crops reached macro-F1 0.948 (95% CI 0.939–0.957). Late fusion with the LiDAR Random Forest reached 0.959, against 0.637 for the LiDAR Random Forest alone.
+- AC2 (CNN ≥ 0.80) and AC3 (fusion gain ≥ +0.02, CI lower bound > 0; observed +0.323, CI 0.313–0.334) both pass.
+- Fusion adds only about +0.011 over the CNN alone: almost all the gain comes from appearance.
+- The gap is expected. We designed the appearance model so that colour and a stripe almost fully disambiguate the classes: a hand-written three-rule colour heuristic with no learning already reaches 0.837, whereas 2D geometry cannot.
+- The result shows that the camera pipeline, fusion and protocol work. It does not show that a real camera would deliver this margin.
+
 ## Model-suitability recommendations (proposal objective 6)
 
 | Robotics need | Recommended approach | Evidence | Caveat |
 |---|---|---|---|
 | Real-time obstacle class from LiDAR | Random Forest on engineered segment geometry | Best macro-F1 (0.635); fast inference; interpretable features | Ceiling limited by 2D geometry; add camera or tracking |
+| Obstacle class when a camera is available | CNN on camera crops, late-fused with LiDAR Random Forest | Fusion 0.959, CNN 0.948 vs LiDAR 0.637 on the same folds | Synthetic appearance designed by us: an upper bound, not a real-image result |
 | Distance to nearest obstacle | Raw min-ultrasonic reading, plus a learned (RF) correction for blind configurations | Baseline MAE about 2 cm; RF −34% error on truly blind frames | Learned model alone is not better on ordinary frames |
 | Recognising environment type | K-Means/GMM on windowed scan statistics | ARI 0.71–0.83 vs null 99th percentile 0.017 | Validated on synthetic families only |
 | Point-to-point navigation, open or cluttered | PPO, with a safety layer | 93% / 61% success | Collision rate 4–31%: needs a reactive safety shield or a stronger collision cost |
@@ -61,8 +69,9 @@ Linear models were competitive only after feature engineering. k-NN was sensitiv
   - 3 seeds and 300k steps; one held-out episode per map (50 maps per type).
   - Path ratio is measured against straight-line distance and only on successful episodes. It can be slightly below 1 because of the 0.2 m goal tolerance.
   - The reactive and random baselines are deterministic or single-seed.
+- **Synthetic camera appearance.** Class appearance (hue, saturation, height, stripe) was authored by us with little overlap. The vision scores are therefore an upper bound tied to our rendering choices and do not transfer to real imagery.
 - **Cut for time** (future work):
-  - camera/vision and LiDAR–camera fusion;
+  - real camera images and learned (early) fusion;
   - curriculum learning, DQN, and A* optimal-path references;
   - nested tuning beyond small grids;
   - multiple-comparison correction;

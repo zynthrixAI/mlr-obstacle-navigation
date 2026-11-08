@@ -8,7 +8,7 @@ Machine Learning for Robotics (Section 9A), instructor: Mr. Sudais
 
 This project studies how machine learning can support obstacle detection and navigation for a mobile robot. It combines:
 
-- **A 2D simulator** with a 360-ray LiDAR (downsampled to 36 rays for frame features and RL), and 8 wide-cone ultrasonic sensors that have blind spots. Three map types are supported: open, narrow and cluttered.
+- **A 2D simulator** with a 360-ray LiDAR (downsampled to 36 rays for frame features and RL), 8 wide-cone ultrasonic sensors that have blind spots, and a simulated pan camera aimed at LiDAR detections. Three map types are supported: open, narrow and cluttered.
 - **Real data:** the UCI Wall-Following Robot Navigation dataset (4-sensor version, 5,456 rows; CC BY 4.0; Freire et al., 2009).
 
 ## Tasks
@@ -17,6 +17,7 @@ This project studies how machine learning can support obstacle detection and nav
 2. **Regression.** Nearest-obstacle distance estimated from ultrasonic readings only, reported separately for observable and blind-spot strata.
 3. **Clustering.** Environment clustering, evaluated against a map-level permutation null.
 4. **Reinforcement learning.** Navigation comparing a reactive baseline, tabular Q-learning and PPO.
+5. **Vision & fusion.** A simulated pan camera renders a 32×32 RGB crop of each LiDAR segment; colour-rule, colour-histogram LogReg and a small CNN classify wall/obstacle/target; late fusion with the LiDAR Random Forest (same 60k segments, GroupKFold by map).
 
 ## Evaluation Protocol
 
@@ -52,15 +53,17 @@ Run from the repository root, in this order:
 python -m sim.generate     # ~1 min
 python -m tasks.run_all    # ~30 min (UCI, segments, regression, clustering)
 python -m tasks.regression_blind  # ~1 min, truly-blind regression stratum (T3b)
+python -m tasks.vision           # ~6 min, camera crops + CNN + LiDAR-camera fusion (T6)
 python -m rl.train         # ~20-40 min; env vars PPO_STEPS, Q_EPISODES
 python -m rl.evaluate      # ~5 min
 ```
 
 ## Outputs
 
-- `results/`: tables T1–T5 (CSV), figures F* (PNG), and `uci_*` files for the UCI data.
+- `results/`: tables T1–T6 (CSV) including the vision table (T6) and acceptance results, figures F* (PNG) including the vision confusion matrices (F8) and example crops (F9), and `uci_*` files for the UCI data.
 - `models/`: trained model files.
+- `data/crops.npz`: cached camera crops. This is a regenerable cache and is not tracked in git.
 
 ## Limitations
 
-The sensors are simulated, and the environment is 2D. There is no camera or vision input. The UCI labels are near-deterministic, so they make classification easier than real-world sensing would be.
+The sensors are simulated, and the environment is 2D. Camera appearance is synthetic and authored by us (colour/height/stripe), so vision scores are an upper bound that does not transfer to real images. The UCI labels are near-deterministic, so they make classification easier than real-world sensing would be.

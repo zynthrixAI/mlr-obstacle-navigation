@@ -19,7 +19,7 @@ from tasks.segment_classification import N_SUB, CLASSES
 
 torch.set_num_threads(4)
 np.random.seed(SEED); torch.manual_seed(SEED); random.seed(SEED)
-MAX_EPOCHS, PATIENCE, BATCH = 8, 2, 256
+MAX_EPOCHS, PATIENCE, BATCH = 8, 3, 256
 CACHE = os.path.join(DATA, "crops.npz")
 
 
@@ -127,6 +127,24 @@ def train_cnn(Xtr, ytr, Xva, yva, Xte, fold):
     return predict_proba(m, Tva), predict_proba(m, Tte), ep_used, len(times), sum(times)
 
 
+def colour_rule(X):
+    """Hand-written 3-rule colour heuristic (no fitting), per methodology review: central 16x16 region.
+    wall if mean saturation < 0.25; target if a bright low-saturation stripe row or red-orange saturated hue;
+    else obstacle."""
+    import colorsys
+    out = np.empty(len(X), int)
+    for i, im in enumerate(X):
+        c = im[8:24, 8:24].astype(float) / 255
+        hsv = np.array([colorsys.rgb_to_hsv(*px) for px in c.reshape(-1, 3)]).reshape(16, 16, 3)
+        s_mean = hsv[..., 1].mean()
+        rows_v, rows_s = hsv[..., 2].mean(1), hsv[..., 1].mean(1)
+        stripe = bool(((rows_v > 0.7) & (rows_s < 0.25)).any())
+        hue = hsv[..., 0][hsv[..., 1] > 0.4]
+        red = hue.size > 20 and np.mean((hue < 0.10) | (hue > 0.95)) > 0.6 and s_mean > 0.45
+        out[i] = 0 if s_mean < 0.25 else (2 if (stripe or red) else 1)
+    return out
+
+
 def main():
     t0 = time.time()
     seg = load_seg()
@@ -135,10 +153,11 @@ def main():
     fcols = [c for c in seg.columns if c.startswith("f_")]
     F = seg[fcols].values.astype(float)
     folds = outer_folds(g)
-    names = ["Majority", "ColorHist-LogReg", "CNN", "LiDAR-RF", "Fusion"]
+    names = ["Majority", "ColourRule (hand, 3 rules)", "ColorHist-LogReg", "CNN", "LiDAR-RF", "Fusion"]
     oof = {n: np.full(len(y), -1) for n in names}
     oof_p = {n: np.zeros((len(y), 3)) for n in ("CNN", "LiDAR-RF", "Fusion")}
     ws, eps, cnn_t = [], [], 0.0
+    oof["ColourRule (hand, 3 rules)"][:] = colour_rule(X)          # no fitting, so no fold dependence
     for k, (tr, te) in enumerate(folds):
         assert not set(g[tr]) & set(g[te])
         itr_, iva_ = next(GroupShuffleSplit(1, test_size=0.2, random_state=SEED).split(tr, groups=g[tr]))
@@ -149,7 +168,7 @@ def main():
         oof["ColorHist-LogReg"][te] = hp.fit(hist_feats(X[itr]), y[itr]).predict(hist_feats(X[te]))
         rf = Pipeline([("imp", SimpleImputer(strategy="median", keep_empty_features=True)),
                        ("rf", RandomForestClassifier(n_estimators=300, class_weight="balanced_subsample",
-                                                     n_jobs=4, random_state=0))]).fit(F[itr], y[itr])
+                                                     min_samples_leaf=5, n_jobs=4, random_state=0))]).fit(F[itr], y[itr])
         prf_va, prf_te = rf.predict_proba(F[iva]), rf.predict_proba(F[te])
         pc_va, pc_te, ep_used, ep_run, tt = train_cnn(X[itr], y[itr], X[iva], y[iva], X[te], k)
         cnn_t += tt
@@ -176,7 +195,7 @@ def main():
                          **{f"recall_{c}": r for c, r in zip(CLASSES, rec)}, n=N_SUB,
                          fusion_w_per_fold=";".join(map(str, ws)) if n == "Fusion" else "",
                          cnn_epochs_per_fold=";".join(map(str, eps)) if n == "CNN" else "",
-                         note="fixed-HP RF on 80% of train maps (differs from T2 tuned RF)" if n == "LiDAR-RF" else ""))
+                         note=("RF with T2-selected min_samples_leaf=5, fit on inner-train maps (80% of each outer-train fold)" if n == "LiDAR-RF" else "no fitting; hand rule on central pixels" if n.startswith("ColourRule") else "")))
     res = pd.DataFrame(rows); res.to_csv(os.path.join(RES, "T6_vision.csv"), index=False)
     print(res.round(4).to_string(index=False))
 
@@ -191,7 +210,7 @@ def main():
            dict(criterion="AC3: Fusion minus LiDAR-RF macro-F1 >= +0.02 and bootstrap CI low > 0", value=v3, ci_low=l3, ci_high=h3,
                 **{"pass": bool(v3 >= 0.02 and l3 > 0)}),
            dict(criterion="descriptive: CNN minus LiDAR-RF macro-F1", value=v4, ci_low=l4, ci_high=h4, **{"pass": "NA"}),
-           dict(criterion="note: LiDAR-RF uses fixed hyper-parameters and 80% of training maps; differs from T2 tuned RF",
+           dict(criterion="note: LiDAR-RF uses T2-selected min_samples_leaf=5; appearance model is authored (upper bound, see reviews/vision.md)",
                 value=np.nan, ci_low=np.nan, ci_high=np.nan, **{"pass": "NA"})]
     pd.DataFrame(acc).to_csv(os.path.join(RES, "T6_acceptance.csv"), index=False)
     print(pd.DataFrame(acc).round(4).to_string(index=False))
