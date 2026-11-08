@@ -35,7 +35,7 @@ _ANG = np.deg2rad(np.arange(36) * 10.0)
 def shield(a, rays):
     if a != 0:
         return a
-    r = np.nan_to_num(rays, nan=np.inf)
+    r = np.nan_to_num(rays, nan=1e6)                     # dropout = free
     fwd, lat = r * np.cos(_ANG), np.abs(r * np.sin(_ANG))
     if np.any((fwd > 0) & (fwd < SHIELD_AHEAD) & (lat < SHIELD_HALF_W)):
         _, l, rr = sectors36(rays)
