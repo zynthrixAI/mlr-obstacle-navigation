@@ -15,11 +15,14 @@ This project studies how machine learning can support obstacle detection and nav
 
 1. **Classification.** LiDAR object-segment classification (wall / obstacle / target), plus movement classification on the UCI data.
    - Exploratory: temporal tracking — each segment is linked causally to the matching segment in the previous scan; features aggregated over up to 5 past views raise Random Forest macro-F1 from 0.635 to 0.713 (`tasks/temporal.py`, run inside `tasks.run_all`).
+   - Odometry-noise robustness (`tasks/temporal_odometry.py`, run by `tasks.run_all`): with simulated dead-reckoning drift the tracking gain is +0.078 (low noise), +0.068 (medium), +0.047 (high).
 2. **Regression.** Nearest-obstacle distance estimated from ultrasonic readings only, reported separately for observable and blind-spot strata.
 3. **Clustering.** Environment clustering, evaluated against a map-level permutation null.
 4. **Reinforcement learning.** Navigation comparing a reactive baseline, tabular Q-learning and PPO.
    - Post-hoc safety shield: a LiDAR veto on PPO's forward action (agent `ppo_shield` in `rl.evaluate`) removes collisions in open and cluttered maps.
+   - Pre-specified ablation PPO-v2 (`python -m rl.train_v2`, about 26 min on 3 cores): doubled collision/proximity penalties, 4-frame memory, 1M steps. It did not improve narrow-corridor success (0.120 vs 0.153).
 5. **Vision & fusion.** A simulated pan camera renders a 32×32 RGB crop of each LiDAR segment; colour-rule, colour-histogram LogReg and a small CNN classify wall/obstacle/target; late fusion with the LiDAR Random Forest (same 60k segments, GroupKFold by map).
+   - Hard appearance variant: `python -m tasks.vision --appearance hard` (~10–20 min) renders deliberately ambiguous crops (target-like obstacles, stripes on some obstacles, off-colour targets, coloured walls, partial occlusion). There the CNN scores 0.755 and fusion 0.807, so fusion adds +0.053 over the camera alone. `--replot` redraws F12 from results/T6b_oof.npz.
 
 ## Evaluation Protocol
 
@@ -56,20 +59,23 @@ python -m sim.generate     # ~0.5 min (measured 32 s)
 python -m tasks.run_all    # ~34 min (UCI, segments, temporal tracking, regression, clustering)
 python -m tasks.regression_blind  # ~1 min, truly-blind regression stratum (T3b)
 python -m tasks.vision           # ~7 min, camera crops + CNN + LiDAR-camera fusion (T6)
+python -m tasks.vision --appearance hard   # ~10-20 min, hard appearance variant (T6b)
 python -m rl.train         # ~20-40 min; env vars PPO_STEPS, Q_EPISODES
+python -m rl.train_v2     # ~26 min, PPO-v2 ablation
 python -m rl.evaluate      # ~2.5 min (uses the committed models/)
 ```
 
 ## Outputs
 
-- `results/`: tables T1–T6 (CSV) including the vision table (T6) and acceptance results, the temporal tracking table (T2c, with acceptance and by-track-length results), and T5, which now includes the `ppo_shield` agent; figures F* (PNG) including the vision confusion matrices (F8), example crops (F9), and the gain by track length (F10); and `uci_*` files for the UCI data.
+- `results/`: tables T1–T6 (CSV) including the vision table (T6) and acceptance results, the temporal tracking table (T2c, with acceptance and by-track-length results), the odometry table (T2d) with F11, the hard-vision table (T6b) with F12 and F13 (`results/T6b_oof.npz` holds the saved out-of-fold predictions), and T5, which now includes the `ppo_shield` and `ppo_v2` agents; figures F* (PNG) including the vision confusion matrices (F8), example crops (F9), and the gain by track length (F10); and `uci_*` files for the UCI data.
 - `models/`: trained model files.
 - `data/segments.csv.gz` (40 MB) and `data/frames.csv.gz` (11 MB): the simulated datasets, committed compressed. To use them without regenerating, run `gunzip -k data/segments.csv.gz data/frames.csv.gz`. Alternatively, `python -m sim.generate` rebuilds identical files in about 30 s.
 - `data/crops.npz`: cached camera crops. This is a regenerable cache and is not tracked in git: it is 157 MB and does not compress (pixel noise), which is over GitHub's 100 MB file limit. `python -m tasks.vision` rebuilds it.
+- `data/crops_hard.npz`: cached hard-appearance camera crops. This is a regenerable cache and is not tracked in git; `python -m tasks.vision --appearance hard` rebuilds it.
 
 ## Limitations
 
 The sensors are simulated, and the environment is 2D. Camera appearance is synthetic and authored by us (colour/height/stripe), so vision scores are an upper bound that does not transfer to real images. The UCI labels are near-deterministic, so they make classification easier than real-world sensing would be.
 
 ## Reproducibility check
-On 2026-11-08 the full pipeline (`sim.generate` → `tasks.run_all` → `tasks.regression_blind` → `tasks.vision` → `rl.evaluate`, about 44 min on the session's cloud machine) was rerun from a fresh clone. All 19 result CSVs matched the committed ones exactly, except the wall-clock `seconds` column of `T2c_temporal.csv`. `rl.train` was not rerun; evaluation uses the committed models.
+On 2026-11-08 the full pipeline (`sim.generate` → `tasks.run_all` → `tasks.regression_blind` → `tasks.vision` → `rl.evaluate`, about 44 min on the session's cloud machine) was rerun from a fresh clone. All 19 result CSVs matched the committed ones exactly, except the wall-clock `seconds` column of `T2c_temporal.csv`. `rl.train` was not rerun; evaluation uses the committed models. The odometry, hard-vision and PPO-v2 analyses were added after this check. The hard-vision rerun reproduced its numbers exactly.
