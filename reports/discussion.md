@@ -18,7 +18,9 @@ Linear models were competitive only after feature engineering. k-NN was sensitiv
 - **AC1, segment classification (0.85 target; RF reached 0.635):**
   - The miss is about what a single 2D scan can observe. Targets were deliberately small cylinders whose size overlaps the small obstacle cylinders. The confusion matrix (Figure 3) shows that most errors are between obstacle and target, and between short wall fragments and box faces.
   - Short segments (fewer than 6 points) reach only 0.48 macro-F1, against 0.69 for longer ones.
-  - This is a sensing limit, not a modelling failure. Telling these objects apart needs appearance (a camera) or temporal tracking. We tested the camera route in the vision & fusion experiment (finding 5).
+  - This is largely a sensing limit of a single scan. Telling these objects apart needs more views (temporal tracking) or appearance (a camera). We tested both.
+  - **Tracking (exploratory, T2c):** linking each segment causally to the matching segment in the previous scan, and adding features aggregated over up to 5 past views, raised RF macro-F1 from 0.635 to 0.713 (+0.078, 95% CI 0.071–0.084). AC1 still fails. The gain grows with track length: +0.003 for segments seen once, +0.063 for 2–3 views and +0.126 for 4 or more (0.779). About 42% of segments have no predecessor, which caps the overall gain. Assumptions: exact simulator poses (perfect odometry), and objects spaced far enough apart that links are always correct, so this is an optimistic estimate.
+  - **Camera:** see the vision & fusion experiment (finding 5).
 - **AC5, distance regression (20% improvement over the min-ultrasonic baseline not met; RF achieved 10.6% on observable near-range rows):**
   - With 30° cones at 45° spacing, the nearest point is almost always inside, or within 7.5° of, a cone. So the raw minimum reading is already an excellent estimator (MAE about 2 cm).
   - Learning pays off where the sensor model genuinely fails. On the **truly blind frames** (1.9% of frames, where no cone sees the nearest point), RF cut the baseline MAE from 0.212 m to 0.140 m (−34%), and the near-range MAE from 0.315 m to 0.192 m.
@@ -29,6 +31,7 @@ Linear models were competitive only after feature engineering. k-NN was sensitiv
   - It failed the safety criterion: PPO collided in 4%, 17% and 31% of episodes (open, narrow, cluttered), against 0–2% for the reactive rule.
   - PPO has learned an aggressive goal-seeking policy. A −100 collision penalty was not enough to outweigh the dense progress reward over 300k steps.
   - Narrow corridors need long detours away from the goal, which a myopic progress reward actively discourages. This is the classic reward-shaping trap.
+  - **Safety shield (post-hoc, T5):** a run-time veto replaces PPO's "forward" with the reactive turn whenever a LiDAR ray lies in the corridor the robot body would sweep (lateral < 0.20 m, ahead < 0.35 m). Without retraining, collisions fell to 0% in open and cluttered maps (from 4% and 31%), and success rose to 96% and 77%. In narrow maps collisions fell from 17% to 3.3% but success stayed at 17%. The remaining collisions come from thin wall ends that fall between the 10° LiDAR rays, a simulator artefact no LiDAR-only shield can catch. The shield was designed after seeing PPO's collisions and is a second use of the held-out maps, so these are post-hoc results reported separately from the pre-specified AC8.
   - Tabular Q-learning (216 states) stayed safe (collisions ≤ 2%) but was weak outside open maps (8% success). The coarse state cannot represent corridor structure.
 
 **4. Clustering recovers environment type, with caveats.**
@@ -48,11 +51,11 @@ Linear models were competitive only after feature engineering. k-NN was sensitiv
 
 | Robotics need | Recommended approach | Evidence | Caveat |
 |---|---|---|---|
-| Real-time obstacle class from LiDAR | Random Forest on engineered segment geometry | Best macro-F1 (0.635); fast inference; interpretable features | Ceiling limited by 2D geometry; add camera or tracking |
+| Real-time obstacle class from LiDAR | Random Forest on engineered segment geometry | Best macro-F1 (0.635); fast inference; interpretable features | Ceiling limited by 2D geometry; tracking over past scans adds +0.078 (0.713) |
 | Obstacle class when a camera is available | CNN on camera crops, late-fused with LiDAR Random Forest | Fusion 0.959, CNN 0.948 vs LiDAR 0.637 on the same folds | Synthetic appearance designed by us: an upper bound, not a real-image result |
 | Distance to nearest obstacle | Raw min-ultrasonic reading, plus a learned (RF) correction for blind configurations | Baseline MAE about 2 cm; RF −34% error on truly blind frames | Learned model alone is not better on ordinary frames |
 | Recognising environment type | K-Means/GMM on windowed scan statistics | ARI 0.71–0.83 vs null 99th percentile 0.017 | Validated on synthetic families only |
-| Point-to-point navigation, open or cluttered | PPO, with a safety layer | 93% / 61% success | Collision rate 4–31%: needs a reactive safety shield or a stronger collision cost |
+| Point-to-point navigation, open or cluttered | PPO with a LiDAR safety shield | 96% / 77% success, 0% collisions (post-hoc) | Shield tuned after seeing PPO failures; plain PPO collides 4–31% |
 | Navigation in corridors / safety-critical | Reactive rule or a planner; RL needs better reward/curriculum | Reactive collisions ≤ 2%; PPO 15% success in narrow maps | Reactive success is low |
 | Interpretable, low-data control | Tabular Q-learning | Safe (≤ 2% collisions) | Coarse state, low success beyond open maps |
 
@@ -69,6 +72,7 @@ Linear models were competitive only after feature engineering. k-NN was sensitiv
   - 3 seeds and 300k steps; one held-out episode per map (50 maps per type).
   - Path ratio is measured against straight-line distance and only on successful episodes. It can be slightly below 1 because of the 0.2 m goal tolerance.
   - The reactive and random baselines are deterministic or single-seed.
+- **Post-hoc analyses.** The safety shield and the tracking features were added after the main results. The shield reuses the held-out RL maps; tracking uses exact simulator poses and links that are always correct by construction. Both are reported as exploratory, not as acceptance-criterion passes. Narrow-map collisions that remain come from wall ends thinner than the 10° LiDAR ray spacing.
 - **Synthetic camera appearance.** Class appearance (hue, saturation, height, stripe) was authored by us with little overlap. The vision scores are therefore an upper bound tied to our rendering choices and do not transfer to real imagery.
 - **Cut for time** (future work):
   - real camera images and learned (early) fusion;
