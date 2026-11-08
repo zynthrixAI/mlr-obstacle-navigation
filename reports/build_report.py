@@ -336,7 +336,7 @@ rows = [[lv[r.level], f"{r.link_rate:.3f}", ci(r.pooled_macro_f1, r.pooled_ci_lo
 table(["Noise level (σ_t, σ_h per scan)", "Link rate", "Pooled macro-F1 [95% CI]", "Gain vs single scan [95% CI]", "Median drift (position / heading)"], rows,
       f"Temporal tracking under odometry noise, Random Forest with fixed parameters (results/T2d_odometry.csv); single-scan engineered reference: pooled macro-F1 {od_ref.pooled_macro_f1:.3f}.",
       size=8.5, widths=[1.6, 0.7, 1.5, 1.5, 1.2], key="odo")
-figure("F11_odometry.png", "Temporal-tracking macro-F1 and gain under dead-reckoning odometry noise (noise per scan interval).", label_override="3b")
+figure("F11_odometry.png", "Temporal-tracking macro-F1 (with 95% CI) under dead-reckoning odometry noise (noise per scan interval).", label_override="3b")
 _o = lambda lv_, c: od.loc[od.level == lv_, c].iloc[0]
 para(f"The gain degrades gradually rather than collapsing: it is +{_o('none','gain_vs_eng'):.3f} with exact poses and +{_o('high','gain_vs_eng'):.3f} (CI {_o('high','gain_ci_low'):.3f}–{_o('high','gain_ci_high'):.3f}) at the high level, "
      f"where the link rate falls from {_o('none','link_rate'):.3f} to {_o('high','link_rate'):.3f} and median position drift reaches {_o('high','median_pos_err_m'):.2f} m. The CI lower bound stays above zero at every level. "
@@ -484,7 +484,7 @@ para("**Hard-appearance variant.** This is an exploratory analysis that was pre-
      "Obstacles: 30% take a target-like colour and a target-like height (0.4–0.6 m), the other 70% keep the original distribution; independently 20% carry a stripe. "
      "Targets: height 0.4–0.6 m; 80% target-like colour and 20% a random non-target hue; only 40% carry a stripe. "
      "In addition, 25% of crops are partially occluded: a vertical band covering 20–45% of the crop width at a uniformly random position, drawn as an unstriped object of random colour and height 0.3–1.2 m, "
-     "at 0.5–0.9 times the depth of the nearest part of the segment. The rendering noise is unchanged. Geometry, LiDAR data, the 60,000 segments, folds, models, fusion protocol and criteria definitions are the same as in the easy experiment; "
+     "at 0.5–0.9 times the nearest depth seen in that band of columns. The rendering noise is unchanged. Geometry, LiDAR data, the 60,000 segments, folds, models, fusion protocol and criteria definitions are the same as in the easy experiment; "
      "the acceptance thresholds were set for the easy variant, so the hard-variant criteria are reported as descriptive only (pass column NA).")
 vh = rd("T6b_vision_hard.csv")
 para(f"{tref('vishard')} gives the results in the same format as {tref('vis')} and {tref('vishardacc')} the acceptance criteria and descriptive differences; Figure 11 shows example crops and Figure 12 the confusion matrices.")

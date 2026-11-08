@@ -47,7 +47,7 @@ Linear models were competitive only after feature engineering. k-NN was sensitiv
 - Fusion adds only about +0.011 over the CNN alone: almost all the gain comes from appearance.
 - The gap is expected. We designed the appearance model so that colour and a stripe almost fully disambiguate the classes: a hand-written three-rule colour heuristic with no learning already reaches 0.837, whereas 2D geometry cannot.
 - The result shows that the camera pipeline, fusion and protocol work. It does not show that a real camera would deliver this margin.
-- **Hard appearance (pre-specified, T6b):** we then made appearance deliberately ambiguous: 30% of obstacles coloured and sized like targets, stripes on 20% of obstacles and only 40% of targets, 20% of targets off-colour, 15% coloured walls, and partial occlusion in 25% of crops. The colour rule fell to 0.559 and the CNN to 0.755. Fusion reached 0.807, now clearly above the CNN alone (+0.053, CI 0.047–0.060) and in every fold. When appearance is ambiguous, LiDAR geometry and camera appearance are complementary. Target recall stays low (about 0.57) for both.
+- **Hard appearance (pre-specified, T6b):** we then made appearance deliberately ambiguous: 30% of obstacles coloured and sized like targets, stripes on 20% of obstacles and only 40% of targets, 20% of targets off-colour, 15% coloured walls, and partial occlusion in 25% of crops. The colour rule fell to 0.559 and the CNN to 0.755. Fusion reached 0.807, now clearly above the CNN alone (+0.053, CI 0.047–0.060) and in every fold. When appearance is ambiguous, LiDAR geometry and camera appearance are complementary. Target recall stays low for both (CNN 0.591, fusion 0.567).
 
 ## Model-suitability recommendations (proposal objective 6)
 

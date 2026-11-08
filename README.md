@@ -75,7 +75,7 @@ python -m rl.evaluate      # ~2.5 min (uses the committed models/)
 
 ## Limitations
 
-The sensors are simulated, and the environment is 2D. Camera appearance is synthetic and authored by us (colour/height/stripe), so vision scores are an upper bound that does not transfer to real images. The UCI labels are near-deterministic, so they make classification easier than real-world sensing would be.
+The sensors are simulated, and the environment is 2D. Camera appearance is synthetic and authored by us (colour/height/stripe), so vision scores are tied to our rendering choices and do not transfer to real images (the main run is near an upper bound; the hard variant adds designed overlap). The UCI labels are near-deterministic, so they make classification easier than real-world sensing would be.
 
 ## Reproducibility check
 On 2026-11-08 the full pipeline (`sim.generate` → `tasks.run_all` → `tasks.regression_blind` → `tasks.vision` → `rl.evaluate`, about 44 min on the session's cloud machine) was rerun from a fresh clone. All 19 result CSVs matched the committed ones exactly, except the wall-clock `seconds` column of `T2c_temporal.csv`. `rl.train` was not rerun; evaluation uses the committed models. The odometry, hard-vision and PPO-v2 analyses were added after this check. The hard-vision rerun reproduced its numbers exactly.
