@@ -19,7 +19,7 @@ def main():
             timed("uci_classification", uci.main)
     except Exception:
         traceback.print_exc(); print("[run_all] uci_classification skipped")
-    for m in ["segment_classification", "regression", "clustering"]:
+    for m in ["segment_classification", "temporal", "regression", "clustering"]:
         mod = importlib.import_module(f"tasks.{m}")
         timed(m, mod.main)
     print(f"[run_all] total {time.time()-t0:.0f}s")

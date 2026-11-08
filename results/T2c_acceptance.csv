@@ -1,0 +1,6 @@
+criterion,value,ci_low,ci_high,pass
+AC1 re-check: RF eng+temporal pooled OOF macro-F1 >= 0.85,0.7132886639349004,0.7015191000710279,0.7241825545774351,False
+"gain: RF (eng+temporal) minus RF (eng) pooled macro-F1, map-bootstrap 95% CI",0.07792156875227474,0.07096933910737589,0.08441369180491562,True
+"descriptive: gain (RF eng+temporal minus RF eng) macro-F1, track_len 1 (n=25252)",0.0029363524213358305,,,NA
+"descriptive: gain (RF eng+temporal minus RF eng) macro-F1, track_len 2-3 (n=17841)",0.0633533735152767,,,NA
+"descriptive: gain (RF eng+temporal minus RF eng) macro-F1, track_len 4+ (n=16907)",0.12607330351149382,,,NA
