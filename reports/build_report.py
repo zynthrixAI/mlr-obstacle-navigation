@@ -114,7 +114,7 @@ def table(header, rows, caption_text, size=9, widths=None, bold_rows=()):
         cells = t.add_row().cells
         for i, v in enumerate(row):
             cells[i].text = ""
-            add_runs(cells[i].paragraphs[0], str(v), bold_all=ri in bold_rows)
+            add_runs(cells[i].paragraphs[0], ("–" if str(v).strip().lower() in ("nan", "nan ± nan") else str(v)), bold_all=ri in bold_rows)
             for r in cells[i].paragraphs[0].runs:
                 r.font.size = Pt(size)
     from docx.oxml import OxmlElement
@@ -292,7 +292,7 @@ para("**Exploratory: temporal tracking.** This analysis was added after the main
      "It asks whether several views of the same object resolve the ambiguity left by a single scan. Each segment is linked causally to the nearest segment within 0.3 m "
      "in the previous scan of the same episode (10 steps earlier), using a greedy one-to-one assignment on pose and centroid only; labels are never used for linking. "
      "Features are aggregated over up to the last 5 views: mean and max of point count, width, chord, circle radius, linearity and circle residuals and bulge; "
-     "standard deviation of chord and radius; viewing-angle spread; and track length. The same 60,000-segment subsample, the same folds and the same Random Forest grid are used. "
+     "standard deviation of chord and radius; mean range; viewing-angle spread; track length; and the number of views in the window. The same 60,000-segment subsample, the same folds and the same Random Forest grid are used. "
      "Table 5 gives the results and Table 6 the AC1 re-check, the gain over single-scan features with a map-bootstrap CI, and descriptive gains by track length "
      "(Figure 3a plots macro-F1 by track length).")
 tt = rd("T2c_temporal.csv")
@@ -385,10 +385,15 @@ rows = [[an[r.agent], r.map_type, pm(r.success_mean, r.success_std), pm(r.collis
          pm(r.min_clear_mean, r.min_clear_std), pm(r.near_frac_mean, r.near_frac_std)] for r in r5.itertuples()]
 table(["Agent", "Map type", "Success", "Collision", "Path ratio", "Min clearance (m)", "Near-collision fraction"], rows,
       "RL evaluation on held-out maps (results/T5_rl.csv).", size=8, widths=[0.8, 0.8, 1.0, 1.0, 1.0, 1.0, 1.0])
+def _v3(v):
+    try:
+        return f"{float(v):.3f}"
+    except (TypeError, ValueError):
+        return v
 ph = a5.criterion.str.startswith("[post-hoc]")
-rows = [[r.criterion, r.value, passfmt(r.ok)] for r in a5[~ph].itertuples()]
+rows = [[r.criterion, _v3(r.value), passfmt(r.ok)] for r in a5[~ph & ~a5.criterion.str.startswith("[")].itertuples()]
 table(["Criterion", "Value", "Pass"], rows, "RL acceptance criteria, AC8 (results/T5_acceptance.csv).", size=9, widths=[3.8, 1.5, 0.7])
-rows = [[r.criterion.replace("[post-hoc] ", ""), r.value, passfmt(r.ok)] for r in a5[ph].itertuples()]
+rows = [[r.criterion.replace("[post-hoc] ", ""), _v3(r.value), passfmt(r.ok)] for r in a5[ph].itertuples()]
 table(["Criterion", "Value", "Pass"], rows, "Post-hoc: PPO + safety shield against the AC8 thresholds (not pre-specified).", size=9, widths=[3.8, 1.5, 0.7])
 figure("F6_rl_success.png", "Evaluation success rate by agent (random, reactive, Q-learning, PPO and PPO + safety shield) and map type.")
 figure("F7_rl_learning.png", "RL learning curves during training.")

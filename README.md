@@ -64,7 +64,8 @@ python -m rl.evaluate      # ~2.5 min (uses the committed models/)
 
 - `results/`: tables T1–T6 (CSV) including the vision table (T6) and acceptance results, the temporal tracking table (T2c, with acceptance and by-track-length results), and T5, which now includes the `ppo_shield` agent; figures F* (PNG) including the vision confusion matrices (F8), example crops (F9), and the gain by track length (F10); and `uci_*` files for the UCI data.
 - `models/`: trained model files.
-- `data/crops.npz`: cached camera crops. This is a regenerable cache and is not tracked in git.
+- `data/segments.csv.gz` (40 MB) and `data/frames.csv.gz` (11 MB): the simulated datasets, committed compressed. To use them without regenerating, run `gunzip -k data/segments.csv.gz data/frames.csv.gz`. Alternatively, `python -m sim.generate` rebuilds identical files in about 30 s.
+- `data/crops.npz`: cached camera crops. This is a regenerable cache and is not tracked in git: it is 157 MB and does not compress (pixel noise), which is over GitHub's 100 MB file limit. `python -m tasks.vision` rebuilds it.
 
 ## Limitations
 
