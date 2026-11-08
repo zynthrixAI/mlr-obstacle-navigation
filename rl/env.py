@@ -4,6 +4,9 @@ obs  = 36 LiDAR rays / 5 (dropout -> 1.0) + goal distance / 10 + sin, cos(goal a
 act  = {0 forward 0.1 m, 1 rotate +15 deg, 2 rotate -15 deg}
 r    = 10*(d_goal[t-1]-d_goal[t]) - 0.05 - 0.5*[min_ray < 0.30] + 100*[goal] - 100*[collision]
 ends : goal (< 0.2 m), collision, or 400 steps (truncation)
+
+Optional reward weights (defaults reproduce the reward above exactly; used by the PPO-v2 ablation, rl/train_v2.py):
+    collision_penalty (default 100.0), proximity_penalty (default 0.5).
 """
 from __future__ import annotations
 
@@ -29,8 +32,10 @@ def start_goal_for(seed: int):
 class NavEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    def __init__(self, seed_pool=RL_TRAIN):
+    def __init__(self, seed_pool=RL_TRAIN, collision_penalty: float = 100.0, proximity_penalty: float = 0.5):
         self.seed_pool = np.asarray(list(seed_pool))
+        self.collision_penalty = float(collision_penalty)
+        self.proximity_penalty = float(proximity_penalty)
         self.observation_space = gym.spaces.Box(-1.0, 1.5, shape=(39,), dtype=np.float32)
         self.action_space = gym.spaces.Discrete(3)
 
@@ -71,14 +76,14 @@ class NavEnv(gym.Env):
         obs = self._obs()
         d = goal_polar(self.pose, self.goal)[0]
         min_ray = np.nanmin(self.last_rays) if not np.all(np.isnan(self.last_rays)) else MAX_RANGE
-        r = 10.0 * (self.d_prev - d) - 0.05 - 0.5 * (min_ray < 0.30)
+        r = 10.0 * (self.d_prev - d) - 0.05 - self.proximity_penalty * (min_ray < 0.30)
         self.d_prev = d
         success = d < GOAL_TOL
         terminated = bool(success or collided)
         if success:
             r += 100.0
         if collided:
-            r -= 100.0
+            r -= self.collision_penalty
         truncated = self.t >= MAX_STEPS and not terminated
         info = {}
         if terminated or truncated:

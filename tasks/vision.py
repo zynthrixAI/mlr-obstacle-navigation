@@ -33,7 +33,8 @@ MODE = "easy"
 OUT = {"easy": dict(cache="crops.npz", table="T6_vision.csv", acc="T6_acceptance.csv", conf="F8_vision_confusion.png",
                     crops="F9_crop_examples.png", tag=""),
        "hard": dict(cache="crops_hard.npz", table="T6b_vision_hard.csv", acc="T6b_acceptance_hard.csv",
-                    conf="F12_vision_hard_confusion.png", crops="F13_crops_hard.png", tag="[hard appearance] ")}
+                    conf="F12_vision_hard_confusion.png", crops="F13_crops_hard.png", tag="[hard appearance] ",
+                    oof="T6b_oof.npz")}
 OCC_SEED = 0x0CC1  # hard-mode occlusion rng = default_rng([row, OCC_SEED]); separate from the noise rng (row)
 
 
@@ -167,11 +168,43 @@ def colour_rule(X):
     return out
 
 
+def _key(n):
+    return n.split(" ")[0].replace("-", "_")
+
+
+def plot_confusion(y, oof, tag, path):
+    """Pooled-OOF confusion matrices (LiDAR-RF, CNN, Fusion). The mode tag goes into the suptitle only."""
+    fig, axs = plt.subplots(1, 3, figsize=(13, 4.3))
+    for ax, n in zip(axs, ["LiDAR-RF", "CNN", "Fusion"]):
+        cm = confusion_matrix(y, oof[n], labels=[0, 1, 2], normalize="true")
+        im = ax.imshow(cm, cmap="Blues", vmin=0, vmax=1)
+        for i in range(3):
+            for j in range(3):
+                ax.text(j, i, f"{cm[i,j]:.2f}", ha="center", va="center", color="white" if cm[i, j] > .5 else "black")
+        ax.set_xticks(range(3), CLASSES); ax.set_yticks(range(3), CLASSES)
+        ax.set_xlabel("predicted"); ax.set_ylabel("true"); ax.set_title(f"{n} (pooled OOF)")
+    if tag:
+        fig.suptitle(tag.strip() + " confusion matrices (rows normalised)")
+    fig.colorbar(im, ax=axs, shrink=0.8); fig.savefig(path, dpi=150, bbox_inches="tight")
+
+
+def replot(mode):
+    """Redraw the confusion figure from the persisted OOF file (no retraining)."""
+    O = OUT[mode]
+    z = np.load(os.path.join(RES, O["oof"]))
+    oof = {n: z[f"pred_{_key(n)}"] for n in ("LiDAR-RF", "CNN", "Fusion")}
+    plot_confusion(z["y"], oof, O["tag"], os.path.join(RES, O["conf"]))
+    print(f"[T6] redrew {O['conf']} from {O['oof']}")
+
+
 def main():
     global MODE, CACHE
     ap = argparse.ArgumentParser()
     ap.add_argument("--appearance", choices=["easy", "hard"], default=os.environ.get("T6_APPEARANCE", "easy"))
-    MODE = ap.parse_args().appearance
+    ap.add_argument("--replot", action="store_true", help="redraw the confusion figure from the saved OOF file (hard mode)")
+    a = ap.parse_args(); MODE = a.appearance
+    if a.replot:
+        return replot(MODE)
     O = OUT[MODE]; TAG = O["tag"]
     CACHE = os.path.join(DATA, O["cache"])
     print(f"[T6] appearance={MODE} threads={N_THREADS}", flush=True)
@@ -224,7 +257,7 @@ def main():
                          **{f"recall_{c}": r for c, r in zip(CLASSES, rec)}, n=N_SUB,
                          fusion_w_per_fold=";".join(map(str, ws)) if n == "Fusion" else "",
                          cnn_epochs_per_fold=";".join(map(str, eps)) if n == "CNN" else "",
-                         note=("RF with T2-selected min_samples_leaf=5, fit on inner-train maps (80% of each outer-train fold)" if n == "LiDAR-RF" else "no fitting; hand rule on central pixels" if n.startswith("ColourRule") else "")))
+                         note=("RF with T2-selected min_samples_leaf=5, fit on inner-train maps (80% of each outer-train fold)" if n == "LiDAR-RF" else ("no fitting; hand rule on central pixels" if MODE == "easy" else "no fitting; hand rule designed against the EASY appearance spec, unchanged (fair no-fit baseline, not tuned for the hard variant)") if n.startswith("ColourRule") else "")))
     res = pd.DataFrame(rows); res.to_csv(os.path.join(RES, O["table"]), index=False)
     print(res.round(4).to_string(index=False))
 
@@ -235,9 +268,9 @@ def main():
     v2, l2, h2, _ = bootstrap_maps(ms, lambda v: f1c(v, 0))
     v3, l3, h3, _ = bootstrap_maps(ms, lambda v: f1c(v, 2) - f1c(v, 1))
     v4, l4, h4, _ = bootstrap_maps(ms, lambda v: f1c(v, 0) - f1c(v, 1))
-    acc = [dict(criterion=TAG + "AC2: CNN pooled OOF macro-F1 >= 0.80", value=v2, ci_low=l2, ci_high=h2, **{"pass": bool(v2 >= 0.80)}),
+    acc = [dict(criterion=TAG + "AC2: CNN pooled OOF macro-F1 >= 0.80", value=v2, ci_low=l2, ci_high=h2, **{"pass": bool(v2 >= 0.80) if MODE == "easy" else "NA (descriptive)"}),
            dict(criterion=TAG + "AC3: Fusion minus LiDAR-RF macro-F1 >= +0.02 and bootstrap CI low > 0", value=v3, ci_low=l3, ci_high=h3,
-                **{"pass": bool(v3 >= 0.02 and l3 > 0)}),
+                **{"pass": bool(v3 >= 0.02 and l3 > 0) if MODE == "easy" else "NA (descriptive)"}),
            dict(criterion=TAG + "descriptive: CNN minus LiDAR-RF macro-F1", value=v4, ci_low=l4, ci_high=h4, **{"pass": "NA"})]
     if MODE == "easy":
         acc.append(dict(criterion="note: LiDAR-RF uses T2-selected min_samples_leaf=5; appearance model is authored (upper bound, see reviews/vision.md)",
@@ -251,16 +284,12 @@ def main():
     pd.DataFrame(acc).to_csv(os.path.join(RES, O["acc"]), index=False)
     print(pd.DataFrame(acc).round(4).to_string(index=False))
 
-    fig, axs = plt.subplots(1, 3, figsize=(13, 4.3))
-    for ax, n in zip(axs, ["LiDAR-RF", "CNN", "Fusion"]):
-        cm = confusion_matrix(y, oof[n], labels=[0, 1, 2], normalize="true")
-        im = ax.imshow(cm, cmap="Blues", vmin=0, vmax=1)
-        for i in range(3):
-            for j in range(3):
-                ax.text(j, i, f"{cm[i,j]:.2f}", ha="center", va="center", color="white" if cm[i, j] > .5 else "black")
-        ax.set_xticks(range(3), CLASSES); ax.set_yticks(range(3), CLASSES)
-        ax.set_xlabel("predicted"); ax.set_ylabel("true"); ax.set_title(f"{TAG}{n} (pooled OOF)")
-    fig.colorbar(im, ax=axs, shrink=0.8); fig.savefig(os.path.join(RES, O["conf"]), dpi=150, bbox_inches="tight")
+    if MODE != "easy":   # persist OOF preds/probas so figures can be redrawn without retraining (--replot)
+        np.savez_compressed(os.path.join(RES, O["oof"]), y=y, map_seed=g, models=np.array(names),
+                            fusion_w=np.array(ws), cnn_epochs=np.array(eps),
+                            **{f"pred_{_key(n)}": oof[n] for n in names},
+                            **{f"proba_{_key(n)}": oof_p[n] for n in oof_p})
+    plot_confusion(y, oof, TAG, os.path.join(RES, O["conf"]))
 
     rng = np.random.RandomState(SEED)
     fig, axs = plt.subplots(3, 10, figsize=(15, 5))

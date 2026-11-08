@@ -1,0 +1,7 @@
+[2026-11-08 16:02] timing pilot (before any evaluation): 3 parallel processes x 20,480 steps, n_envs=1, took 58-60 s each
+  -> ~345 steps/s/process -> projected ~48-50 min wall-clock for 1,000,000 steps (< 75 min). Decision: train 1,000,000 steps per seed (no reduction to 600k).
+[2026-11-08 16:02:17] start PPO-v2: steps=1000000 seeds=(0, 1, 2) n_envs=1 n_stack=4 reward={'collision_penalty': 200.0, 'proximity_penalty': 1.0} processes=3
+PPO-v2 seed 0: 1000000 steps, 1553s
+PPO-v2 seed 1: 1000000 steps, 1559s
+PPO-v2 seed 2: 1000000 steps, 1559s
+[2026-11-08 16:28:21] done, wall-clock 1564s

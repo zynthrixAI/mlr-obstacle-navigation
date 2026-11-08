@@ -1,4 +1,6 @@
 """Evaluate random / reactive / Q-learning / PPO / PPO+safety shield on the held-out RL_EVAL maps (used once, after training).
+Also evaluates the pre-specified PPO-v2 ablation (rl/train_v2.py: reward v2 + 4-frame stack) as "ppo_v2" and
+"ppo_v2_shield"; its rows are appended after the original agents' rows and reported as "[ablation v2]".
 
 Outputs: results/T5_rl.csv, results/T5_rl_episodes.csv, results/T5_acceptance.csv,
          results/F6_rl_success.png, results/F7_rl_learning.png
@@ -43,13 +45,31 @@ def shield(a, rays):
     return a
 
 
-def run_policy(name, seed, act_fn, obs_fn=None):
+class FrameStack:
+    """Per-episode replica of SB3 VecFrameStack (1-D obs, channels last): zeros after reset, newest frame last."""
+
+    def __init__(self, n_stack, dim):
+        self.n, self.dim = n_stack, dim
+        self.buf = np.zeros(n_stack * dim, dtype=np.float32)
+
+    def reset(self):
+        self.buf[:] = 0.0
+
+    def push(self, frame):
+        self.buf = np.roll(self.buf, -self.dim)
+        self.buf[-self.dim:] = frame
+        return self.buf
+
+
+def run_policy(name, seed, act_fn, obs_fn=None, on_reset=None):
     env = NavEnv(seed_pool=RL_EVAL)
     env.reset(seed=1000 + seed)              # seeds the sensor-noise RNG only
     rows = []
     rng = np.random.default_rng(seed)
     for ms in RL_EVAL:
         obs, inf = env.reset(options={"map_seed": ms})
+        if on_reset is not None:
+            on_reset()
         done = False
         while not done:
             a = act_fn(obs, env, rng)
@@ -77,6 +97,19 @@ def main():
         act = lambda o, e, g: int(model.predict(vn.normalize_obs(o[None]), deterministic=True)[0][0])
         rows += run_policy("ppo", s, act)
         rows += run_policy("ppo_shield", s, lambda o, e, g: shield(act(o, e, g), e.last_rays))
+
+    # PPO-v2 ablation: DummyVecEnv -> VecNormalize -> VecFrameStack(4) at training time; replicated here.
+    from rl.train_v2 import N_STACK
+    for s in SEEDS:
+        model2 = PPO.load(os.path.join(MODELS, f"ppo_v2_seed{s}.zip"), device="cpu")
+        vn2 = VecNormalize.load(os.path.join(MODELS, f"ppo_v2_seed{s}_vecnorm.pkl"), DummyVecEnv([NavEnv]))
+        vn2.training, vn2.norm_reward = False, False
+        fs = FrameStack(N_STACK, NavEnv().observation_space.shape[0])
+        assert model2.observation_space.shape == (fs.buf.size,)
+        act2 = lambda o, e, g: int(model2.predict(fs.push(vn2.normalize_obs(o[None])[0])[None],
+                                                  deterministic=True)[0][0])
+        rows += run_policy("ppo_v2", s, act2, on_reset=fs.reset)
+        rows += run_policy("ppo_v2_shield", s, lambda o, e, g: shield(act2(o, e, g), e.last_rays), on_reset=fs.reset)
 
     ep = pd.DataFrame(rows)
     ep.to_csv(os.path.join(RESULTS, "T5_rl_episodes.csv"), index=False)
@@ -108,22 +141,34 @@ def main():
         acc.append({"criterion": f"[post-hoc] PPO+shield collision <= reactive ({mt})",
                     "value": f"{p.collision_mean:.3f} vs {rx.collision_mean:.3f}",
                     "pass": bool(p.collision_mean <= rx.collision_mean)})
+    for a, lab in [("ppo_v2", "PPO-v2"), ("ppo_v2_shield", "PPO-v2+shield")]:   # pre-specified ablation, descriptive
+        for mt in MAP_TYPES:
+            p = summ[(summ.agent == a) & (summ.map_type == mt)].iloc[0]
+            rx = summ[(summ.agent == "reactive") & (summ.map_type == mt)].iloc[0]
+            acc.append({"criterion": f"[ablation v2] {lab} success >= {thr[mt]:.0%} ({mt})",
+                        "value": round(p.success_mean, 3), "pass": bool(p.success_mean >= thr[mt])})
+            acc.append({"criterion": f"[ablation v2] {lab} collision <= reactive ({mt})",
+                        "value": f"{p.collision_mean:.3f} vs {rx.collision_mean:.3f}",
+                        "pass": bool(p.collision_mean <= rx.collision_mean)})
     pd.DataFrame(acc).to_csv(os.path.join(RESULTS, "T5_acceptance.csv"), index=False)
     print(pd.DataFrame(acc).to_string(index=False))
 
     # F6 success / collision by map type
-    agents = ["random", "reactive", "qlearning", "ppo", "ppo_shield"]
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    agents = ["random", "reactive", "qlearning", "ppo", "ppo_shield", "ppo_v2", "ppo_v2_shield"]
+    hatch = {"ppo_v2": "//", "ppo_v2_shield": "//"}
+    w = 0.8 / len(agents)
+    fig, axes = plt.subplots(1, 2, figsize=(15, 4.8))
     for ax, m in zip(axes, ["success", "collision"]):
         x = np.arange(len(MAP_TYPES))
         for i, a in enumerate(agents):
             d = summ[summ.agent == a].set_index("map_type").loc[list(MAP_TYPES)]
-            ax.bar(x + (i - 2) * 0.16, d[f"{m}_mean"], 0.16, yerr=d[f"{m}_std"].fillna(0), label=a, capsize=3)
+            ax.bar(x + (i - (len(agents) - 1) / 2) * w, d[f"{m}_mean"], w, yerr=d[f"{m}_std"].fillna(0), label=a,
+                   capsize=2, hatch=hatch.get(a), edgecolor="white" if a in hatch else None, linewidth=0)
         ax.set_xticks(x, MAP_TYPES)
         ax.set_ylabel(f"{m} rate")
         ax.set_ylim(0, 1)
         ax.set_title(f"{m.capitalize()} rate on 50 held-out maps/type (mean ± std over seeds)")
-    axes[0].legend()
+    axes[0].legend(fontsize=8, ncol=2)
     fig.tight_layout()
     fig.savefig(os.path.join(RESULTS, "F6_rl_success.png"), dpi=150)
 
@@ -133,16 +178,23 @@ def main():
         f = glob.glob(os.path.join(MODELS, f"ppo_seed{s}*.monitor.csv"))
         if f:
             m = pd.read_csv(f[0], skiprows=1)
-            axes[0].plot(m.l.cumsum(), m.success.rolling(200, min_periods=20).mean(), label=f"PPO seed {s}")
+            axes[0].plot(m.l.cumsum(), m.success.rolling(200, min_periods=20).mean(), label=f"PPO seed {s}",
+                         color=f"C{s}")
+        f2 = os.path.join(MODELS, f"ppo_v2_seed{s}.monitor.csv")
+        if os.path.exists(f2):
+            m = pd.read_csv(f2, skiprows=1)
+            axes[0].plot(m.l.cumsum(), m.success.rolling(200, min_periods=20).mean(), label=f"PPO-v2 seed {s}",
+                         color=f"C{s}", ls="--")
         h = np.load(os.path.join(MODELS, f"q_seed{s}_hist.npy"))
         axes[1].plot(h[:, 0], pd.Series(h[:, 2]).rolling(200, min_periods=20).mean(), label=f"Q seed {s}")
     axes[0].set_xlabel("environment steps")
     axes[1].set_xlabel("episode")
-    for ax, t in zip(axes, ["PPO training success (rolling 200 ep.)", "Q-learning training success (rolling 200 ep.)"]):
+    for ax, t in zip(axes, ["PPO / PPO-v2 training success (rolling 200 ep.)",
+                            "Q-learning training success (rolling 200 ep.)"]):
         ax.set_title(t)
         ax.set_ylabel("success rate")
         ax.set_ylim(0, 1)
-        ax.legend()
+        ax.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(os.path.join(RESULTS, "F7_rl_learning.png"), dpi=150)
 
