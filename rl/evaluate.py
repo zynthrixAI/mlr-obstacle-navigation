@@ -1,4 +1,4 @@
-"""Evaluate random / reactive / Q-learning / PPO on the held-out RL_EVAL maps (used once, after training).
+"""Evaluate random / reactive / Q-learning / PPO / PPO+safety shield on the held-out RL_EVAL maps (used once, after training).
 
 Outputs: results/T5_rl.csv, results/T5_rl_episodes.csv, results/T5_acceptance.csv,
          results/F6_rl_success.png, results/F7_rl_learning.png
@@ -18,10 +18,29 @@ import pandas as pd
 from rl.env import NavEnv
 from rl.qlearning import QPolicy
 from rl.train import MODELS, RESULTS, SEEDS
-from sim.robot import reactive_action
+from sim.robot import reactive_action, sectors36
 from sim.seeds import MAP_TYPES, RL_EVAL, RL_TRAIN
 
 assert not set(RL_EVAL) & set(RL_TRAIN)
+
+# Safety shield (post-hoc, fixed before evaluation; no retraining). A forward move is vetoed when any
+# LiDAR ray in the front half-plane hits inside a corridor the robot body would sweep:
+# lateral offset < SHIELD_HALF_W and forward distance < SHIELD_AHEAD. The veto replaces "forward"
+# with the reactive rule's turn (towards the more open side). Dropped-out rays (NaN) count as free.
+SHIELD_HALF_W = 0.20      # robot radius 0.15 m + 0.05 m margin
+SHIELD_AHEAD = 0.35       # robot radius 0.15 m + one 0.1 m step + 0.10 m margin
+_ANG = np.deg2rad(np.arange(36) * 10.0)
+
+
+def shield(a, rays):
+    if a != 0:
+        return a
+    r = np.nan_to_num(rays, nan=np.inf)
+    fwd, lat = r * np.cos(_ANG), np.abs(r * np.sin(_ANG))
+    if np.any((fwd > 0) & (fwd < SHIELD_AHEAD) & (lat < SHIELD_HALF_W)):
+        _, l, rr = sectors36(rays)
+        return 1 if l >= rr else 2
+    return a
 
 
 def run_policy(name, seed, act_fn, obs_fn=None):
@@ -55,7 +74,9 @@ def main():
         model = PPO.load(os.path.join(MODELS, f"ppo_seed{s}.zip"), device="cpu")
         vn = VecNormalize.load(os.path.join(MODELS, f"ppo_seed{s}_vecnorm.pkl"), DummyVecEnv([NavEnv]))
         vn.training, vn.norm_reward = False, False          # frozen statistics
-        rows += run_policy("ppo", s, lambda o, e, g: int(model.predict(vn.normalize_obs(o[None]), deterministic=True)[0][0]))
+        act = lambda o, e, g: int(model.predict(vn.normalize_obs(o[None]), deterministic=True)[0][0])
+        rows += run_policy("ppo", s, act)
+        rows += run_policy("ppo_shield", s, lambda o, e, g: shield(act(o, e, g), e.last_rays))
 
     ep = pd.DataFrame(rows)
     ep.to_csv(os.path.join(RESULTS, "T5_rl_episodes.csv"), index=False)
@@ -79,17 +100,25 @@ def main():
         acc.append({"criterion": f"PPO collision <= reactive ({mt})",
                     "value": f"{p.collision_mean:.3f} vs {rx.collision_mean:.3f}",
                     "pass": bool(p.collision_mean <= rx.collision_mean)})
+    for mt in MAP_TYPES:                                   # descriptive, post-hoc (not pre-specified AC8)
+        p = summ[(summ.agent == "ppo_shield") & (summ.map_type == mt)].iloc[0]
+        rx = summ[(summ.agent == "reactive") & (summ.map_type == mt)].iloc[0]
+        acc.append({"criterion": f"[post-hoc] PPO+shield success >= {thr[mt]:.0%} ({mt})",
+                    "value": round(p.success_mean, 3), "pass": bool(p.success_mean >= thr[mt])})
+        acc.append({"criterion": f"[post-hoc] PPO+shield collision <= reactive ({mt})",
+                    "value": f"{p.collision_mean:.3f} vs {rx.collision_mean:.3f}",
+                    "pass": bool(p.collision_mean <= rx.collision_mean)})
     pd.DataFrame(acc).to_csv(os.path.join(RESULTS, "T5_acceptance.csv"), index=False)
     print(pd.DataFrame(acc).to_string(index=False))
 
     # F6 success / collision by map type
-    agents = ["random", "reactive", "qlearning", "ppo"]
+    agents = ["random", "reactive", "qlearning", "ppo", "ppo_shield"]
     fig, axes = plt.subplots(1, 2, figsize=(11, 4))
     for ax, m in zip(axes, ["success", "collision"]):
         x = np.arange(len(MAP_TYPES))
         for i, a in enumerate(agents):
             d = summ[summ.agent == a].set_index("map_type").loc[list(MAP_TYPES)]
-            ax.bar(x + (i - 1.5) * 0.2, d[f"{m}_mean"], 0.2, yerr=d[f"{m}_std"].fillna(0), label=a, capsize=3)
+            ax.bar(x + (i - 2) * 0.16, d[f"{m}_mean"], 0.16, yerr=d[f"{m}_std"].fillna(0), label=a, capsize=3)
         ax.set_xticks(x, MAP_TYPES)
         ax.set_ylabel(f"{m} rate")
         ax.set_ylim(0, 1)
