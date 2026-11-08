@@ -278,3 +278,70 @@ def _free_components(w: World) -> np.ndarray:
     free = (d > ROBOT_RADIUS + 0.02).reshape(n, n)
     lab, _ = ndimage.label(free)
     return lab
+
+
+# ---------------------------------------------------------------------- HARD appearance variant (T6b)
+HARD_TARGET_HUE_LO, HARD_TARGET_HUE_HI = -0.06, 0.12   # target hue envelope ~ N(0.03, 0.03) +-3 sd
+
+
+@lru_cache(maxsize=4096)
+def hard_appearance(seed: int, map_type: str | None = None):
+    """PRE-SPECIFIED hard appearance variant (fixed before any hard-mode result was computed).
+
+    Returns (obj_color (n_obj,3), obj_height (n_obj,), obj_stripe (n_obj,)) as NEW read-only arrays for the
+    same object ids as make_world(seed).obj_cls. It never mutates the cached World, so the default ("easy")
+    appearance, geometry and LiDAR data are unchanged. Separate RNG stream: default_rng(seed + 31_337_771)
+    (easy uses seed + 7_919_993). Every object draws the same fixed set of numbers in the same order,
+    whatever branch it takes.
+
+    Target-like colour = easy target distribution: hue ~ N(0.03, 0.03) mod 1, sat U(0.6, 0.95), val U(0.6, 0.95).
+    - Walls (one object per wall segment, 1.0 m tall): 85 % grey/beige as in easy; 15 % a saturated random
+      colour (hue U(0,1), sat U(0.6, 0.95), val U(0.5, 0.9)). No stripe.
+    - Obstacles: 30 % take a target-like colour AND a target-like height U(0.4, 0.6); the other 70 % keep the
+      easy obstacle distribution (hue U(0,1), sat U(0.3, 0.95), val U(0.4, 0.95), height U(0.3, 1.2)).
+      Independently, 20 % carry a stripe.
+    - Targets: height U(0.4, 0.6); 80 % target-like colour, 20 % a random NON-target hue
+      (hue U(0.12, 0.94), i.e. outside the target envelope [-0.06, 0.12]) with the same sat/val ranges.
+      Only 40 % carry a stripe.
+    Render-level partial occlusion (25 % of crops) and the unchanged noise model live in sim/camera.py.
+    """
+    import colorsys
+    w = make_world(seed, map_type)
+    rng = np.random.default_rng(seed + 31_337_771)
+    n = len(w.obj_cls)
+    color, height, stripe = np.zeros((n, 3)), np.zeros(n), np.zeros(n, bool)
+    for o, c in enumerate(w.obj_cls):
+        u_branch, u_stripe, u_h, u_s, u_v, u_ht, z = rng.random(7)
+        if c == WALL:
+            height[o] = 1.0
+            if u_branch < 0.15:
+                color[o] = colorsys.hsv_to_rgb(u_h, 0.6 + 0.35 * u_s, 0.5 + 0.4 * u_v)
+            else:   # easy wall distribution (grey/beige), from the same uniforms
+                g = 0.55 + 0.20 * u_s
+                color[o] = (g, g * (0.95 + 0.05 * u_v), g * (0.85 + 0.10 * u_ht))
+        elif c == TARGET:
+            height[o] = 0.4 + 0.2 * u_ht
+            stripe[o] = u_stripe < 0.40
+            if u_branch < 0.20:
+                hue = 0.12 + 0.82 * u_h
+            else:
+                hue = (0.03 + 0.03 * _std_normal(z)) % 1.0
+            color[o] = colorsys.hsv_to_rgb(hue, 0.6 + 0.35 * u_s, 0.6 + 0.35 * u_v)
+        else:
+            stripe[o] = u_stripe < 0.20
+            if u_branch < 0.30:
+                hue = (0.03 + 0.03 * _std_normal(z)) % 1.0
+                color[o] = colorsys.hsv_to_rgb(hue, 0.6 + 0.35 * u_s, 0.6 + 0.35 * u_v)
+                height[o] = 0.4 + 0.2 * u_ht
+            else:
+                color[o] = colorsys.hsv_to_rgb(u_h, 0.3 + 0.65 * u_s, 0.4 + 0.55 * u_v)
+                height[o] = 0.3 + 0.9 * u_ht
+    for a in (color, height, stripe):
+        a.setflags(write=False)
+    return color, height, stripe
+
+
+def _std_normal(u: float) -> float:
+    """Inverse-CDF standard normal from one uniform (keeps a fixed number of draws per object)."""
+    from scipy.special import ndtri
+    return float(ndtri(min(max(u, 1e-12), 1 - 1e-12)))

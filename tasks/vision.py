@@ -1,5 +1,12 @@
-"""Task 6: camera crops (CNN) vs LiDAR RF vs late fusion."""
-import os, time, random
+"""Task 6: camera crops (CNN) vs LiDAR RF vs late fusion.
+
+`python -m tasks.vision` (default, --appearance easy) -> T6/F8/F9, cache data/crops.npz.
+`python -m tasks.vision --appearance hard` -> T6b_vision_hard.csv, T6b_acceptance_hard.csv,
+F12_vision_hard_confusion.png, F13_crops_hard.png, cache data/crops_hard.npz. Hard = pre-specified ambiguous
+appearance (sim.world.hard_appearance) + partial occlusion (sim.camera.render_crop occ_rng); same 60k segments,
+outer folds, models, fusion protocol and AC definitions (descriptive only). Env T6_THREADS sets torch/RF/Pool
+threads (default 4)."""
+import os, sys, time, random, argparse
 import numpy as np, pandas as pd
 import matplotlib
 matplotlib.use("Agg")
@@ -17,18 +24,33 @@ from sklearn.preprocessing import StandardScaler
 from tasks.common import *
 from tasks.segment_classification import N_SUB, CLASSES
 
-torch.set_num_threads(4)
+N_THREADS = int(os.environ.get("T6_THREADS", 4))
+torch.set_num_threads(N_THREADS)
 np.random.seed(SEED); torch.manual_seed(SEED); random.seed(SEED)
 MAX_EPOCHS, PATIENCE, BATCH = 8, 3, 256
 CACHE = os.path.join(DATA, "crops.npz")
+MODE = "easy"
+OUT = {"easy": dict(cache="crops.npz", table="T6_vision.csv", acc="T6_acceptance.csv", conf="F8_vision_confusion.png",
+                    crops="F9_crop_examples.png", tag=""),
+       "hard": dict(cache="crops_hard.npz", table="T6b_vision_hard.csv", acc="T6b_acceptance_hard.csv",
+                    conf="F12_vision_hard_confusion.png", crops="F13_crops_hard.png", tag="[hard appearance] ")}
+OCC_SEED = 0x0CC1  # hard-mode occlusion rng = default_rng([row, OCC_SEED]); separate from the noise rng (row)
 
 
 def _render_group(args):
     from sim.world import make_world
     from sim.camera import render_crop
-    ms, idxs, b0, b1, px, py, pt = args
+    ms, idxs, b0, b1, px, py, pt = args[:7]
+    mode = args[7] if len(args) > 7 else "easy"
     w = make_world(int(ms))
     out = np.empty((len(idxs), 32, 32, 3), np.uint8)
+    if mode == "hard":
+        from sim.world import hard_appearance
+        app = hard_appearance(int(ms))
+        for k, i in enumerate(idxs):
+            out[k] = render_crop(w, (px[k], py[k], pt[k]), b0[k], b1[k], np.random.default_rng(int(i)),
+                                 appearance=app, occ_rng=np.random.default_rng([int(i), OCC_SEED]))
+        return idxs, out
     for k, i in enumerate(idxs):
         out[k] = render_crop(w, (px[k], py[k], pt[k]), b0[k], b1[k], np.random.default_rng(int(i)))
     return idxs, out
@@ -49,9 +71,9 @@ def get_crops(seg):
     jobs = []
     for ms, d in seg.groupby("map_seed"):
         jobs.append((ms, d.index.values, d.bearing_start_deg.values, d.bearing_end_deg.values,
-                     d.pose_x.values, d.pose_y.values, d.pose_theta.values))
+                     d.pose_x.values, d.pose_y.values, d.pose_theta.values) + ((MODE,) if MODE != "easy" else ()))
     X = np.empty((len(seg), 32, 32, 3), np.uint8)
-    with Pool(4) as p:
+    with Pool(N_THREADS) as p:
         for idxs, out in p.imap_unordered(_render_group, jobs):
             X[idxs] = out
     np.savez_compressed(CACHE, X=X, y=seg.label.values, map_seed=seg.map_seed.values, row=np.arange(len(seg)))
@@ -146,6 +168,13 @@ def colour_rule(X):
 
 
 def main():
+    global MODE, CACHE
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--appearance", choices=["easy", "hard"], default=os.environ.get("T6_APPEARANCE", "easy"))
+    MODE = ap.parse_args().appearance
+    O = OUT[MODE]; TAG = O["tag"]
+    CACHE = os.path.join(DATA, O["cache"])
+    print(f"[T6] appearance={MODE} threads={N_THREADS}", flush=True)
     t0 = time.time()
     seg = load_seg()
     X = get_crops(seg)
@@ -168,7 +197,7 @@ def main():
         oof["ColorHist-LogReg"][te] = hp.fit(hist_feats(X[itr]), y[itr]).predict(hist_feats(X[te]))
         rf = Pipeline([("imp", SimpleImputer(strategy="median", keep_empty_features=True)),
                        ("rf", RandomForestClassifier(n_estimators=300, class_weight="balanced_subsample",
-                                                     min_samples_leaf=5, n_jobs=4, random_state=0))]).fit(F[itr], y[itr])
+                                                     min_samples_leaf=5, n_jobs=N_THREADS, random_state=0))]).fit(F[itr], y[itr])
         prf_va, prf_te = rf.predict_proba(F[iva]), rf.predict_proba(F[te])
         pc_va, pc_te, ep_used, ep_run, tt = train_cnn(X[itr], y[itr], X[iva], y[iva], X[te], k)
         cnn_t += tt
@@ -196,7 +225,7 @@ def main():
                          fusion_w_per_fold=";".join(map(str, ws)) if n == "Fusion" else "",
                          cnn_epochs_per_fold=";".join(map(str, eps)) if n == "CNN" else "",
                          note=("RF with T2-selected min_samples_leaf=5, fit on inner-train maps (80% of each outer-train fold)" if n == "LiDAR-RF" else "no fitting; hand rule on central pixels" if n.startswith("ColourRule") else "")))
-    res = pd.DataFrame(rows); res.to_csv(os.path.join(RES, "T6_vision.csv"), index=False)
+    res = pd.DataFrame(rows); res.to_csv(os.path.join(RES, O["table"]), index=False)
     print(res.round(4).to_string(index=False))
 
     def onehot(p):
@@ -206,13 +235,20 @@ def main():
     v2, l2, h2, _ = bootstrap_maps(ms, lambda v: f1c(v, 0))
     v3, l3, h3, _ = bootstrap_maps(ms, lambda v: f1c(v, 2) - f1c(v, 1))
     v4, l4, h4, _ = bootstrap_maps(ms, lambda v: f1c(v, 0) - f1c(v, 1))
-    acc = [dict(criterion="AC2: CNN pooled OOF macro-F1 >= 0.80", value=v2, ci_low=l2, ci_high=h2, **{"pass": bool(v2 >= 0.80)}),
-           dict(criterion="AC3: Fusion minus LiDAR-RF macro-F1 >= +0.02 and bootstrap CI low > 0", value=v3, ci_low=l3, ci_high=h3,
+    acc = [dict(criterion=TAG + "AC2: CNN pooled OOF macro-F1 >= 0.80", value=v2, ci_low=l2, ci_high=h2, **{"pass": bool(v2 >= 0.80)}),
+           dict(criterion=TAG + "AC3: Fusion minus LiDAR-RF macro-F1 >= +0.02 and bootstrap CI low > 0", value=v3, ci_low=l3, ci_high=h3,
                 **{"pass": bool(v3 >= 0.02 and l3 > 0)}),
-           dict(criterion="descriptive: CNN minus LiDAR-RF macro-F1", value=v4, ci_low=l4, ci_high=h4, **{"pass": "NA"}),
-           dict(criterion="note: LiDAR-RF uses T2-selected min_samples_leaf=5; appearance model is authored (upper bound, see reviews/vision.md)",
-                value=np.nan, ci_low=np.nan, ci_high=np.nan, **{"pass": "NA"})]
-    pd.DataFrame(acc).to_csv(os.path.join(RES, "T6_acceptance.csv"), index=False)
+           dict(criterion=TAG + "descriptive: CNN minus LiDAR-RF macro-F1", value=v4, ci_low=l4, ci_high=h4, **{"pass": "NA"})]
+    if MODE == "easy":
+        acc.append(dict(criterion="note: LiDAR-RF uses T2-selected min_samples_leaf=5; appearance model is authored (upper bound, see reviews/vision.md)",
+                        value=np.nan, ci_low=np.nan, ci_high=np.nan, **{"pass": "NA"}))
+    else:
+        v5, l5, h5, _ = bootstrap_maps(ms, lambda v: f1c(v, 2) - f1c(v, 0))
+        acc += [dict(criterion=TAG + "descriptive: Fusion minus CNN macro-F1", value=v5, ci_low=l5, ci_high=h5, **{"pass": "NA"}),
+                dict(criterion=TAG + "note: descriptive only (AC thresholds were set for the easy variant); pre-specified hard "
+                     "appearance in sim.world.hard_appearance + occlusion in sim.camera.render_crop; LiDAR-RF min_samples_leaf=5; "
+                     "pooled OOF, 1000 map-bootstrap 95% CI", value=np.nan, ci_low=np.nan, ci_high=np.nan, **{"pass": "NA"})]
+    pd.DataFrame(acc).to_csv(os.path.join(RES, O["acc"]), index=False)
     print(pd.DataFrame(acc).round(4).to_string(index=False))
 
     fig, axs = plt.subplots(1, 3, figsize=(13, 4.3))
@@ -223,8 +259,8 @@ def main():
             for j in range(3):
                 ax.text(j, i, f"{cm[i,j]:.2f}", ha="center", va="center", color="white" if cm[i, j] > .5 else "black")
         ax.set_xticks(range(3), CLASSES); ax.set_yticks(range(3), CLASSES)
-        ax.set_xlabel("predicted"); ax.set_ylabel("true"); ax.set_title(f"{n} (pooled OOF)")
-    fig.colorbar(im, ax=axs, shrink=0.8); fig.savefig(os.path.join(RES, "F8_vision_confusion.png"), dpi=150, bbox_inches="tight")
+        ax.set_xlabel("predicted"); ax.set_ylabel("true"); ax.set_title(f"{TAG}{n} (pooled OOF)")
+    fig.colorbar(im, ax=axs, shrink=0.8); fig.savefig(os.path.join(RES, O["conf"]), dpi=150, bbox_inches="tight")
 
     rng = np.random.RandomState(SEED)
     fig, axs = plt.subplots(3, 10, figsize=(15, 5))
@@ -233,8 +269,8 @@ def main():
         for c, i in enumerate(idx):
             axs[r, c].imshow(X[i]); axs[r, c].axis("off")
             axs[r, c].set_title(CLASSES[r], fontsize=8)
-    fig.suptitle("Example crops (rows: wall / obstacle / target)")
-    fig.savefig(os.path.join(RES, "F9_crop_examples.png"), dpi=130, bbox_inches="tight")
+    fig.suptitle(TAG + "Example crops (rows: wall / obstacle / target)")
+    fig.savefig(os.path.join(RES, O["crops"]), dpi=130, bbox_inches="tight")
     print(f"[T6] CNN epochs/fold={eps} total CNN time={cnn_t:.0f}s; total runtime={time.time()-t0:.0f}s")
 
 

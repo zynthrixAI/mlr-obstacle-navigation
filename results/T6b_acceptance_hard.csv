@@ -1,0 +1,6 @@
+criterion,value,ci_low,ci_high,pass
+[hard appearance] AC2: CNN pooled OOF macro-F1 >= 0.80,0.754504092370329,0.741282878006424,0.7669279493014718,False
+[hard appearance] AC3: Fusion minus LiDAR-RF macro-F1 >= +0.02 and bootstrap CI low > 0,0.17076606811576323,0.1606557430483589,0.18070434639968525,True
+[hard appearance] descriptive: CNN minus LiDAR-RF macro-F1,0.11794584676191044,0.1045130622744996,0.13083639204856426,NA
+[hard appearance] descriptive: Fusion minus CNN macro-F1,0.05282022135385278,0.04663785959226586,0.05992418477194987,NA
+"[hard appearance] note: descriptive only (AC thresholds were set for the easy variant); pre-specified hard appearance in sim.world.hard_appearance + occlusion in sim.camera.render_crop; LiDAR-RF min_samples_leaf=5; pooled OOF, 1000 map-bootstrap 95% CI",,,,NA

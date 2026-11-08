@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 .venv/
 data/crops.npz
+data/crops_hard.npz
