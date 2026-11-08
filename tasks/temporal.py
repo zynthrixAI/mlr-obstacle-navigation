@@ -109,6 +109,27 @@ def cm_rows(y, p):
     cm = np.zeros((len(y), 9)); cm[np.arange(len(y)), y * 3 + p.astype(int)] = 1; return cm
 
 
+def plot_f10(bdf=None):
+    """F10: per-track-length macro-F1 bars; redrawable from results/T2c_by_track_len.csv."""
+    if bdf is None:
+        bdf = pd.read_csv(os.path.join(RES, "T2c_by_track_len.csv"))
+    fig, ax = plt.subplots(figsize=(6, 4))
+    x = np.arange(len(bdf)); w = 0.38
+    for k, (col, lab, colr) in enumerate([("RandomForest|engineered", "RF engineered", "#9aa5b1"),
+                                          ("RandomForest|engineered+temporal", "RF engineered + temporal", "#2a6fdb")]):
+        b = ax.bar(x + (k - 0.5) * w, bdf[col], w, label=lab, color=colr)
+        ax.bar_label(b, fmt="%.3f", fontsize=8)
+    ax.axhline(0.85, ls="--", c="k", lw=0.8, label="AC1 target 0.85")
+    ax.set_xticks(x, [f"{b}\n(n={n})" for b, n in zip(bdf.bucket, bdf.n)])
+    ax.set_xlabel("track length (scans, causal)"); ax.set_ylabel("pooled OOF macro-F1")
+    # headroom above 1.0 so the legend sits above the bars and the 0.85 line, never on them
+    ax.set_ylim(0, 1.13); ax.set_yticks(np.arange(0, 1.01, 0.2))
+    ax.set_title("Segment classification by track length")
+    ax.legend(fontsize=8, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.0))
+    for s in ["top", "right"]: ax.spines[s].set_visible(False)
+    fig.tight_layout(); fig.savefig(os.path.join(RES, "F10_temporal_gain.png"), dpi=150); plt.close(fig)
+
+
 def main():
     t0 = time.time()
     full = pd.read_csv(os.path.join(DATA, "segments.csv"))
@@ -178,18 +199,7 @@ def main():
     print(acc_df.round(4).to_string(index=False))
     print(bdf.round(4).to_string(index=False))
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    x = np.arange(len(bdf)); w = 0.38
-    for k, (col, lab, colr) in enumerate([("RandomForest|engineered", "RF engineered", "#9aa5b1"),
-                                          ("RandomForest|engineered+temporal", "RF engineered + temporal", "#2a6fdb")]):
-        b = ax.bar(x + (k - 0.5) * w, bdf[col], w, label=lab, color=colr)
-        ax.bar_label(b, fmt="%.3f", fontsize=8)
-    ax.axhline(0.85, ls="--", c="k", lw=0.8, label="AC1 target 0.85")
-    ax.set_xticks(x, [f"{b}\n(n={n})" for b, n in zip(bdf.bucket, bdf.n)])
-    ax.set_xlabel("track length (scans, causal)"); ax.set_ylabel("pooled OOF macro-F1"); ax.set_ylim(0, 1)
-    ax.set_title("Segment classification by track length"); ax.legend(fontsize=8, loc="lower right")
-    for s in ["top", "right"]: ax.spines[s].set_visible(False)
-    fig.tight_layout(); fig.savefig(os.path.join(RES, "F10_temporal_gain.png"), dpi=150)
+    plot_f10(bdf)
     print(f"[T2c] done in {time.time()-t0:.0f}s (tracking {t_track:.0f}s)")
 
 
