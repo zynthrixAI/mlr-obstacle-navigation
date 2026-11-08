@@ -74,22 +74,26 @@ def bullet(text, level=1):
     return para(text, "List Bullet" if level == 1 else "List Bullet 2")
 
 
-def caption(kind, text):
-    counters[kind] += 1
+def caption(kind, text, label_override=None):
     label = "Figure" if kind == "fig" else "Table"
+    if label_override is None:
+        counters[kind] += 1
+        tag = f"{label} {counters[kind]}"
+    else:  # un-numbered-sequence label, so cited Figure numbers elsewhere do not shift
+        tag = f"{label} {label_override}"
     p = doc.add_paragraph(style="Caption")
-    r = p.add_run(f"{label} {counters[kind]}: ")
+    r = p.add_run(f"{tag}: ")
     r.bold = True
     p.add_run(text)
     return p
 
 
-def figure(fname, text):
+def figure(fname, text, label_override=None):
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.paragraph_format.keep_with_next = True
     p.add_run().add_picture(os.path.join(RES, fname), width=Inches(6))
-    c = caption("fig", text)
+    c = caption("fig", text, label_override)
     c.alignment = WD_ALIGN_PARAGRAPH.CENTER
     counters["fig_n"] += 1
 
@@ -229,6 +233,8 @@ bullet("**AC5 (distance regression):** " + a3.criterion[0].replace("AC5a: ", "(a
 bullet("**AC8 (RL navigation):** PPO success of at least 80% on open maps and at least 60% on narrow and on cluttered maps (held-out evaluation maps), and a PPO collision rate no higher than the reactive controller in each map type.")
 bullet("**AC2 (vision):** CNN pooled out-of-fold macro-F1 of at least 0.80.")
 bullet("**AC3 (fusion):** late-fusion macro-F1 minus LiDAR Random Forest macro-F1 of at least +0.02, with the lower bound of the bootstrap 95% CI (resampling maps) above 0.")
+para("Post-hoc analyses (the RL safety shield and temporal tracking for segment classification) were added after the main results were seen; "
+     "they are reported separately from the pre-specified acceptance criteria and are not counted towards them.")
 para("The vision task uses the same 60,000-segment subsample and the same GroupKFold(5)-by-map outer folds as segment classification. Within each outer-training set, "
      "an inner 80/20 split by maps provides the validation data for CNN early stopping and fusion-weight selection.")
 
@@ -279,11 +285,33 @@ table(["Criterion", "Value", "95% CI", "Pass"], acc_rows(a2), "Segment classific
       size=8.5, widths=[3.6, 0.7, 1.2, 0.5])
 figure("F2_segment_confusion.png", "Segment classification confusion matrix (Random Forest, engineered features).")
 
+para("**Exploratory: temporal tracking.** This analysis was added after the main results and is post-hoc; it is not one of the pre-specified acceptance criteria. "
+     "It asks whether several views of the same object resolve the ambiguity left by a single scan. Each segment is linked causally to the nearest segment within 0.3 m "
+     "in the previous scan of the same episode (10 steps earlier), using a greedy one-to-one assignment on pose and centroid only; labels are never used for linking. "
+     "Features are aggregated over up to the last 5 views: mean and max of point count, width, chord, circle radius, linearity and circle residuals and bulge; "
+     "standard deviation of chord and radius; viewing-angle spread; and track length. The same 60,000-segment subsample, the same folds and the same Random Forest grid are used. "
+     "Table 5 gives the results and Table 6 the AC1 re-check, the gain over single-scan features with a map-bootstrap CI, and descriptive gains by track length "
+     "(Figure 3a plots macro-F1 by track length).")
+tt = rd("T2c_temporal.csv")
+rows = [[r.model, r.features, pm(r.macro_f1_mean, r.macro_f1_std), f3(r.pooled_macro_f1), f3(r.accuracy_mean),
+         f3(r.recall_wall), f3(r.recall_obstacle), f3(r.recall_target)] for r in tt.itertuples()]
+table(["Model", "Features", "Macro-F1 (mean ± std)", "Pooled macro-F1", "Accuracy", "Recall wall", "Recall obst.", "Recall target"], rows,
+      "Segment classification with temporal tracking features, 60,000 segments, GroupKFold(5) by map (results/T2c_temporal.csv).", size=8.5,
+      widths=[0.9, 1.1, 1.1, 0.7, 0.7, 0.5, 0.5, 0.5])
+a2c = rd("T2c_acceptance.csv").rename(columns={"pass": "ok"})
+table(["Criterion", "Value", "95% CI", "Pass"], acc_rows(a2c),
+      "Post-hoc temporal-tracking checks: AC1 re-check, gain with CI, and descriptive gains by track length (results/T2c_acceptance.csv).",
+      size=8.5, widths=[3.6, 0.7, 1.2, 0.5])
+figure("F10_temporal_gain.png", "Macro-F1 by track length: engineered vs engineered + temporal features (Random Forest).", label_override="3a")
+para("These results rest on favourable assumptions. Segment poses are the exact simulator poses (perfect odometry); links are always correct because objects are spaced farther apart "
+     "than the 0.3 m link radius, so a link can never cross to a different object; and only purity-filtered segments are used. The gain is therefore optimistic, "
+     "and real scenes with denser objects and odometry drift would add tracking errors.")
+
 doc.add_heading("6.2 Regression", 2)
 para("The regression task estimates the distance to the nearest obstacle from the eight ultrasonic readings only. The baseline is the raw "
      "minimum ultrasonic reading. Results are reported for all frames and for two strata: frames whose nearest point lies inside an ultrasonic "
      "cone, and frames whose nearest point lies between cones (the observable = False stratum). “Near-range” MAE is computed on frames with true distance below 0.5 m. "
-     "Table 5 lists all models on all frames, plus the baseline and the Random Forest (primary) on each stratum.")
+     "Table 7 lists all models on all frames, plus the baseline and the Random Forest (primary) on each stratum.")
 g = rd("T3_regression.csv")
 sn = {"all": "all frames", "observable": "nearest point inside a cone", "blind_spot": "nearest point between cones"}
 keep = g[(g.stratum == "all") | g.model.isin(["Baseline(min us)", "RandomForest"])]
@@ -295,27 +323,27 @@ for r in keep.itertuples():
 table(["Model", "Features", "Stratum", "MAE (m)", "Near-range MAE (m)", "R²"], rows,
       "Distance regression, out-of-fold (results/T3_regression.csv); primary model in bold.", size=8.5,
       widths=[1.4, 0.9, 1.7, 0.6, 0.8, 0.6], bold_rows=bold)
-para("Acceptance criteria for AC5 are in Table 6.")
+para("Acceptance criteria for AC5 are in Table 8.")
 table(["Criterion", "Value", "95% CI", "Pass"], acc_rows(a3), "Regression acceptance criteria, AC5 (results/T3_acceptance.csv).", size=8.5,
       widths=[3.6, 0.7, 1.2, 0.5])
-para("A post-hoc analysis (Table 7) isolates the “truly blind” frames, where no cone sees the nearest point, and compares the baseline with "
+para("A post-hoc analysis (Table 9) isolates the “truly blind” frames, where no cone sees the nearest point, and compares the baseline with "
      "Random Forest on engineered features.")
 b = rd("T3b_truly_blind.csv")
 sl = {"truly_blind": "truly blind", "seen": "seen by a cone", "between_cones (observable=False)": "nearest point between cones", "all": "all frames"}
 rows = [[sl.get(r.stratum, r.stratum), f"{r.n:,}", f3(r.baseline_mae), f3(r.rf_eng_mae), f3(r.baseline_near_mae), f3(r.rf_eng_near_mae)] for r in b.itertuples()]
 table(["Stratum", "n", "Baseline MAE (m)", "RF-eng MAE (m)", "Baseline near MAE (m)", "RF-eng near MAE (m)"], rows,
       "Truly blind frames versus other strata (results/T3b_truly_blind.csv).", size=8.5, widths=[1.9, 0.6, 0.9, 0.9, 0.9, 0.9])
-figure("F3_regression_mae_by_bin.png", "Regression MAE by true-distance bin for three strata: nearest point seen by a cone, nearest point between cones (still seen by a cone edge), and truly blind (Table 7). Random Forest on engineered features (300 trees, same GroupKFold-by-map OOF protocol) vs the min-ultrasonic baseline.")
+figure("F3_regression_mae_by_bin.png", "Regression MAE by true-distance bin for three strata: nearest point seen by a cone, nearest point between cones (still seen by a cone edge), and truly blind (Table 9). Random Forest on engineered features (300 trees, same GroupKFold-by-map OOF protocol) vs the min-ultrasonic baseline.")
 
 doc.add_heading("6.3 Clustering", 2)
 para("Windowed LiDAR statistics were clustered with K-Means and a Gaussian mixture model (GMM) and compared with the hidden map type using the "
-     "adjusted Rand index (ARI). Table 8 gives internal and external metrics; the reported solution is k = 3 (K-Means) and the BIC-best GMM.")
+     "adjusted Rand index (ARI). Table 10 gives internal and external metrics; the reported solution is k = 3 (K-Means) and the BIC-best GMM.")
 c = rd("T4_clustering.csv")
 rows = [[r.algorithm, r.k, f3(r.silhouette), f3(r.db), f3(r.ari), f3(r.nmi), "" if pd.isna(r.bic) else f"{r.bic:,.0f}",
          "" if pd.isna(r.selected) else str(r.selected).strip()] for r in c.itertuples()]
 table(["Algorithm", "k", "Silhouette", "Davies–Bouldin", "ARI", "NMI", "BIC", "Note"], rows,
       "Clustering results (results/T4_clustering.csv).", size=8.5, widths=[0.8, 0.3, 0.8, 0.9, 0.6, 0.6, 0.8, 1.7])
-para("Table 9 compares the observed K-Means ARI with a map-level permutation null and a bootstrap over maps.")
+para("Table 11 compares the observed K-Means ARI with a map-level permutation null and a bootstrap over maps.")
 pr = rd("T4_permutation.csv").iloc[0]
 rows = [["Observed ARI (K-Means, k=3)", f3(pr.observed_ari)], ["Null mean", f3(pr.null_mean)], ["Null 99th percentile", f3(pr.null_p99)],
         ["Null maximum", f3(pr.null_max)], ["Permutation p-value", f3(pr.p_value)], ["Number of permutations", f"{int(pr.n_perm)}"],
@@ -338,20 +366,28 @@ para("**Tabular Q-learning.** The state combines 3 sectors (front, left, right) 
      "Learning rate α = 0.1, discount γ = 0.99, ε decays linearly from 1.0 to 0.05 over the first 70% of 5,000 training episodes.")
 para("**PPO.** Stable-Baselines3 PPO with an MLP policy and default hyper-parameters is trained for 300,000 steps with 3 seeds. Observations and rewards are normalised with VecNormalize during training; "
      "at evaluation the normalisation statistics are frozen (no updates, raw reward) and the policy acts deterministically.")
-para("Table 10 reports per-agent, per-map-type results (mean ± std over 3 training seeds for Q-learning and PPO; the reactive and random baselines are single deterministic runs, so no std is shown). "
-     "Path ratio is measured on successful episodes only. Table 11 reports AC8.")
+para("**Post-hoc safety shield.** After seeing PPO's collisions on the held-out maps we added a run-time veto, evaluated as a fifth agent (PPO + safety shield). "
+     "When PPO chooses “forward”, the shield checks all 36 LiDAR rays: if any ray lies in the corridor the robot would sweep (lateral offset below 0.20 m and forward distance below 0.35 m), "
+     "the action is replaced by the reactive rule's turn toward the more open side. Dropped-out rays count as free, and PPO is not retrained. Because the rule was designed after inspecting "
+     "PPO's collisions and reuses the same held-out evaluation maps (a second use of that set), it is post-hoc and descriptive; it is not part of the pre-specified AC8. "
+     "The 3.3% of collisions that remain on narrow maps arise from thin wall ends that fall between the 10° LiDAR rays, so the 36-ray sensor cannot see them.")
+para("Table 12 reports per-agent, per-map-type results (mean ± std over 3 training seeds for Q-learning and PPO; the reactive and random baselines are single deterministic runs, so no std is shown). "
+     "Path ratio is measured on successful episodes only. Table 13 reports the six pre-specified AC8 criteria and Table 14 the post-hoc shield rows.")
 r5 = rd("T5_rl.csv")
-r5["o"] = r5.agent.map(["random", "reactive", "qlearning", "ppo"].index)
+r5["o"] = r5.agent.map(["random", "reactive", "qlearning", "ppo", "ppo_shield"].index)
 r5["m"] = r5.map_type.map(["open", "narrow", "cluttered"].index)
 r5 = r5.sort_values(["o", "m"])
-an = {"random": "Random", "reactive": "Reactive", "qlearning": "Q-learning", "ppo": "PPO"}
+an = {"random": "Random", "reactive": "Reactive", "qlearning": "Q-learning", "ppo": "PPO", "ppo_shield": "PPO + safety shield (post-hoc)"}
 rows = [[an[r.agent], r.map_type, pm(r.success_mean, r.success_std), pm(r.collision_mean, r.collision_std), pm(r.path_ratio_mean, r.path_ratio_std),
          pm(r.min_clear_mean, r.min_clear_std), pm(r.near_frac_mean, r.near_frac_std)] for r in r5.itertuples()]
 table(["Agent", "Map type", "Success", "Collision", "Path ratio", "Min clearance (m)", "Near-collision fraction"], rows,
       "RL evaluation on held-out maps (results/T5_rl.csv).", size=8, widths=[0.8, 0.8, 1.0, 1.0, 1.0, 1.0, 1.0])
-rows = [[r.criterion, r.value, passfmt(r.ok)] for r in a5.itertuples()]
+ph = a5.criterion.str.startswith("[post-hoc]")
+rows = [[r.criterion, r.value, passfmt(r.ok)] for r in a5[~ph].itertuples()]
 table(["Criterion", "Value", "Pass"], rows, "RL acceptance criteria, AC8 (results/T5_acceptance.csv).", size=9, widths=[3.8, 1.5, 0.7])
-figure("F6_rl_success.png", "Evaluation success rate by agent and map type.")
+rows = [[r.criterion.replace("[post-hoc] ", ""), r.value, passfmt(r.ok)] for r in a5[ph].itertuples()]
+table(["Criterion", "Value", "Pass"], rows, "Post-hoc: PPO + safety shield against the AC8 thresholds (not pre-specified).", size=9, widths=[3.8, 1.5, 0.7])
+figure("F6_rl_success.png", "Evaluation success rate by agent (random, reactive, Q-learning, PPO and PPO + safety shield) and map type.")
 figure("F7_rl_learning.png", "RL learning curves during training.")
 
 doc.add_heading("6.5 Vision and LiDAR–camera fusion", 2)
@@ -364,7 +400,7 @@ para("This experiment asks whether the camera crops of Section 3.1 resolve the o
      "segment-classification task (Section 6.1) and is fitted on the same inner-training maps. **Late fusion** averages the class probabilities, p = w·p_CNN + (1 − w)·p_RF, "
      "with w chosen on the validation maps of each fold; the selected weights over the five folds were "
      + ", ".join(str(x) for x in v.loc[v.model == "Fusion", "fusion_w_per_fold"].iloc[0].split(";")) + ".")
-para("Table 12 gives the results and Table 13 the acceptance criteria.")
+para("Table 15 gives the results and Table 16 the acceptance criteria.")
 rows = [[r.model, pm(r.macro_f1_mean, r.macro_f1_std), f3(r.macro_f1_pooled), f3(r.accuracy), f3(r.recall_wall), f3(r.recall_obstacle), f3(r.recall_target)]
         for r in v.itertuples()]
 table(["Model", "Macro-F1 (mean ± std over folds)", "Pooled macro-F1", "Accuracy", "Recall wall", "Recall obst.", "Recall target"], rows,
@@ -431,12 +467,17 @@ doc.add_heading("9 Limitations & Future Work", 1)
 render_md(sections["Limitations"])
 
 doc.add_heading("10 Conclusion", 1)
+_c = lambda ag, mt: r5[(r5.agent == ag) & (r5.map_type == mt)].collision_mean.iloc[0]
+_s = lambda ag, mt: r5[(r5.agent == ag) & (r5.map_type == mt)].success_mean.iloc[0]
 para("Across the tasks, tree ensembles were the most reliable default: Random Forest, the pre-specified primary model, was best or close to best on every supervised task, "
      "and feature engineering helped most where the raw signal was ambiguous. The acceptance criteria for segment classification (AC1) and distance regression (AC5) were not met, "
      "and the RL criterion (AC8) was only partially met, but each failure was informative: segment classification is limited by what a single 2D scan can observe, "
      "the raw minimum ultrasonic reading is already an excellent distance estimator and learning pays off mainly on truly blind frames, and PPO learned an aggressive goal-seeking policy that "
      "succeeds in open and cluttered maps but is unsafe and fails in narrow corridors, where the reactive rule or a planner remains safer. Clustering recovered the environment families, "
-     "though only on synthetic families by design. Model choice should therefore follow the application, with a reactive safety layer around learned navigation, and real-camera validation with learned fusion, "
+     "though only on synthetic families by design. "
+     f"Two post-hoc follow-ups tested the suggested remedies: a run-time safety shield lowered PPO's collision rate from {_c('ppo','open'):.0%} to {_c('ppo_shield','open'):.0%} in open maps and from {_c('ppo','cluttered'):.0%} to {_c('ppo_shield','cluttered'):.0%} in cluttered maps "
+     f"(success {_s('ppo_shield','open'):.3f} and {_s('ppo_shield','cluttered'):.3f}) but left {_c('ppo_shield','narrow'):.1%} collisions on narrow maps, and causal temporal tracking raised segment macro-F1 from {tt.pooled_macro_f1.iloc[0]:.3f} to {tt.pooled_macro_f1.iloc[1]:.3f} without reaching the AC1 threshold. "
+     "Both are exploratory and optimistic by construction (the shield reuses the held-out maps; tracking uses exact poses). Model choice should therefore follow the application, with a reactive safety layer around learned navigation, and real-camera validation with learned fusion, "
      "curriculum learning and real-sensor validation, listed above, are the natural next work.")
 
 # ======================================================================= REFERENCES

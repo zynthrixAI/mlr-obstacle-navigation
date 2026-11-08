@@ -14,9 +14,11 @@ This project studies how machine learning can support obstacle detection and nav
 ## Tasks
 
 1. **Classification.** LiDAR object-segment classification (wall / obstacle / target), plus movement classification on the UCI data.
+   - Exploratory: temporal tracking — each segment is linked causally to the matching segment in the previous scan; features aggregated over up to 5 past views raise Random Forest macro-F1 from 0.635 to 0.713 (`tasks/temporal.py`, run inside `tasks.run_all`).
 2. **Regression.** Nearest-obstacle distance estimated from ultrasonic readings only, reported separately for observable and blind-spot strata.
 3. **Clustering.** Environment clustering, evaluated against a map-level permutation null.
 4. **Reinforcement learning.** Navigation comparing a reactive baseline, tabular Q-learning and PPO.
+   - Post-hoc safety shield: a LiDAR veto on PPO's forward action (agent `ppo_shield` in `rl.evaluate`) removes collisions in open and cluttered maps.
 5. **Vision & fusion.** A simulated pan camera renders a 32×32 RGB crop of each LiDAR segment; colour-rule, colour-histogram LogReg and a small CNN classify wall/obstacle/target; late fusion with the LiDAR Random Forest (same 60k segments, GroupKFold by map).
 
 ## Evaluation Protocol
@@ -60,7 +62,7 @@ python -m rl.evaluate      # ~5 min
 
 ## Outputs
 
-- `results/`: tables T1–T6 (CSV) including the vision table (T6) and acceptance results, figures F* (PNG) including the vision confusion matrices (F8) and example crops (F9), and `uci_*` files for the UCI data.
+- `results/`: tables T1–T6 (CSV) including the vision table (T6) and acceptance results, the temporal tracking table (T2c, with acceptance and by-track-length results), and T5, which now includes the `ppo_shield` agent; figures F* (PNG) including the vision confusion matrices (F8), example crops (F9), and the gain by track length (F10); and `uci_*` files for the UCI data.
 - `models/`: trained model files.
 - `data/crops.npz`: cached camera crops. This is a regenerable cache and is not tracked in git.
 
