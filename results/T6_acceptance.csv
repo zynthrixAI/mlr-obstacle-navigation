@@ -1,0 +1,5 @@
+criterion,value,ci_low,ci_high,pass
+AC2: CNN pooled OOF macro-F1 >= 0.80,0.9377426376499091,0.9284644461866329,0.9468347615171823,True
+AC3: Fusion minus LiDAR-RF macro-F1 >= +0.02 and bootstrap CI low > 0,0.36384899752945765,0.35141434300992425,0.3765413042792786,True
+descriptive: CNN minus LiDAR-RF macro-F1,0.35279524858067446,0.3391669755550574,0.3666033277523077,NA
+note: LiDAR-RF uses fixed hyper-parameters and 80% of training maps; differs from T2 tuned RF,,,,NA
