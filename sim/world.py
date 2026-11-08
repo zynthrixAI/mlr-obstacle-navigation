@@ -30,13 +30,22 @@ class World:
     circ_cls: np.ndarray         # (K,)
     free_label: np.ndarray = field(repr=False, default=None)  # connected components of free grid
     grid_res: float = 0.1
+    # appearance (camera): per-primitive object index and per-object attributes
+    seg_obj: np.ndarray = field(repr=False, default=None)     # (M,)
+    circ_obj: np.ndarray = field(repr=False, default=None)    # (K,)
+    obj_cls: np.ndarray = field(repr=False, default=None)     # (n_obj,)
+    obj_color: np.ndarray = field(repr=False, default=None)   # (n_obj,3) in [0,1]
+    obj_height: np.ndarray = field(repr=False, default=None)  # (n_obj,) metres
+    obj_stripe: np.ndarray = field(repr=False, default=None)  # (n_obj,) bool
 
     # ------------------------------------------------------------------ ray casting
-    def raycast(self, pos: np.ndarray, angles: np.ndarray, max_range: float = 5.0):
-        """Return (ranges, hit_class) for rays from pos at absolute angles. No-hit -> max_range, class -1."""
+    def raycast(self, pos: np.ndarray, angles: np.ndarray, max_range: float = 5.0, return_obj: bool = False):
+        """Return (ranges, hit_class[, hit_object]) for rays from pos at absolute angles.
+        No-hit -> max_range, class -1, object -1."""
         d = np.stack([np.cos(angles), np.sin(angles)], axis=1)          # (N,2)
         best = np.full(len(angles), np.inf)
         cls = np.full(len(angles), -1, dtype=int)
+        obj = np.full(len(angles), -1, dtype=int)
         if len(self.seg_a):
             e = self.seg_b - self.seg_a                                   # (M,2)
             ap = self.seg_a - pos                                         # (M,2)
@@ -51,6 +60,7 @@ class World:
             better = tm < best
             best[better] = tm[better]
             cls[better] = self.seg_cls[j[better]]
+            obj[better] = self.seg_obj[j[better]]
         if len(self.circ_c):
             f = pos - self.circ_c                                          # (K,2)
             b = d @ f.T                                                    # (N,K)
@@ -64,9 +74,13 @@ class World:
             better = tm < best
             best[better] = tm[better]
             cls[better] = self.circ_cls[j[better]]
+            obj[better] = self.circ_obj[j[better]]
         miss = best > max_range
         best[miss] = max_range
         cls[miss] = -1
+        obj[miss] = -1
+        if return_obj:
+            return best, cls, obj
         return best, cls
 
     # ------------------------------------------------------------------ nearest obstacle
@@ -203,8 +217,49 @@ def make_world(seed: int, map_type: str | None = None) -> World:
     circ_r = np.array([c[1] for c in circs], float)
     circ_cls = np.array([c[2] for c in circs], int)
     w = World(seed, map_type, seg_a, seg_b, seg_cls, circ_c, circ_r, circ_cls)
+    _assign_appearance(w)
     w.free_label = _free_components(w)
     return w
+
+
+def _assign_appearance(w: World) -> None:
+    """Object ids + appearance, drawn from a SEPARATE rng so geometry/LiDAR data are unchanged.
+
+    Walls: one object per wall segment, grey/beige, 1.0 m tall.
+    Boxes: every 4 consecutive obstacle segments form one box (see _box_segments).
+    Targets: red-orange hue (+-noise), 0.4-0.6 m tall, horizontal stripe 60 % of the time.
+    Obstacles: uniform random hue (so ~10 % fall in the target hue range), 0.3-1.2 m tall, no stripe.
+    """
+    import colorsys
+    rng = np.random.default_rng(w.seed + 7_919_993)
+    seg_obj = np.empty(len(w.seg_cls), int)
+    cls_list, k, run = [], 0, 0
+    for i, c in enumerate(w.seg_cls):
+        if c == WALL:
+            seg_obj[i] = k; cls_list.append(WALL); k += 1; run = 0
+        else:
+            if run % 4 == 0:
+                cls_list.append(int(c)); k += 1
+            seg_obj[i] = k - 1; run += 1
+    circ_obj = np.arange(k, k + len(w.circ_cls))
+    cls_list += [int(c) for c in w.circ_cls]
+    n = len(cls_list)
+    color, height, stripe = np.zeros((n, 3)), np.zeros(n), np.zeros(n, bool)
+    for o, c in enumerate(cls_list):
+        if c == WALL:
+            g = rng.uniform(0.55, 0.75)
+            color[o] = (g, g * rng.uniform(0.95, 1.0), g * rng.uniform(0.85, 0.95))
+            height[o] = 1.0
+        elif c == TARGET:
+            h = (rng.normal(0.03, 0.03)) % 1.0
+            color[o] = colorsys.hsv_to_rgb(h, rng.uniform(0.6, 0.95), rng.uniform(0.6, 0.95))
+            height[o] = rng.uniform(0.4, 0.6)
+            stripe[o] = rng.random() < 0.6
+        else:
+            color[o] = colorsys.hsv_to_rgb(rng.random(), rng.uniform(0.3, 0.95), rng.uniform(0.4, 0.95))
+            height[o] = rng.uniform(0.3, 1.2)
+    w.seg_obj, w.circ_obj = seg_obj, circ_obj
+    w.obj_cls, w.obj_color, w.obj_height, w.obj_stripe = np.array(cls_list), color, height, stripe
 
 
 def _free_components(w: World) -> np.ndarray:

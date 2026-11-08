@@ -128,7 +128,9 @@ def run_map(seed: int):
                         continue
                     raw, eng = segment_features(r360, idx)
                     segs.append({"map_seed": seed, "map_type": w.map_type, "episode_id": f"{seed}-{ep}",
-                                 "step": t, "label": int(vals[k]), "purity": cnt[k] / len(idx), **raw, **eng})
+                                 "step": t, "label": int(vals[k]), "purity": cnt[k] / len(idx), **raw, **eng,
+                                 "bearing_start_deg": int(idx[0]), "bearing_end_deg": int(idx[-1]),
+                                 "pose_x": pose[0], "pose_y": pose[1], "pose_theta": pose[2]})
             a = int(rng.integers(3)) if rng.random() < EPS_RANDOM else reactive_action(r36, ang)
             pose, _ = step_pose(w, pose, a)
     return frames, segs, stats
