@@ -52,12 +52,12 @@ pip install -r requirements.txt
 Run from the repository root, in this order:
 
 ```bash
-python -m sim.generate     # ~1 min
-python -m tasks.run_all    # ~30 min (UCI, segments, regression, clustering)
+python -m sim.generate     # ~0.5 min (measured 32 s)
+python -m tasks.run_all    # ~34 min (UCI, segments, temporal tracking, regression, clustering)
 python -m tasks.regression_blind  # ~1 min, truly-blind regression stratum (T3b)
-python -m tasks.vision           # ~6 min, camera crops + CNN + LiDAR-camera fusion (T6)
+python -m tasks.vision           # ~7 min, camera crops + CNN + LiDAR-camera fusion (T6)
 python -m rl.train         # ~20-40 min; env vars PPO_STEPS, Q_EPISODES
-python -m rl.evaluate      # ~5 min
+python -m rl.evaluate      # ~2.5 min (uses the committed models/)
 ```
 
 ## Outputs
@@ -69,3 +69,6 @@ python -m rl.evaluate      # ~5 min
 ## Limitations
 
 The sensors are simulated, and the environment is 2D. Camera appearance is synthetic and authored by us (colour/height/stripe), so vision scores are an upper bound that does not transfer to real images. The UCI labels are near-deterministic, so they make classification easier than real-world sensing would be.
+
+## Reproducibility check
+On 2026-11-08 the full pipeline (`sim.generate` → `tasks.run_all` → `tasks.regression_blind` → `tasks.vision` → `rl.evaluate`, about 44 min on the session's cloud machine) was rerun from a fresh clone. All 19 result CSVs matched the committed ones exactly, except the wall-clock `seconds` column of `T2c_temporal.csv`. `rl.train` was not rerun; evaluation uses the committed models.

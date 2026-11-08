@@ -235,6 +235,9 @@ bullet("**AC2 (vision):** CNN pooled out-of-fold macro-F1 of at least 0.80.")
 bullet("**AC3 (fusion):** late-fusion macro-F1 minus LiDAR Random Forest macro-F1 of at least +0.02, with the lower bound of the bootstrap 95% CI (resampling maps) above 0.")
 para("Post-hoc analyses (the RL safety shield and temporal tracking for segment classification) were added after the main results were seen; "
      "they are reported separately from the pre-specified acceptance criteria and are not counted towards them.")
+para("Reproducibility: all seeds are fixed. A full rerun from a fresh clone (data generation, all supervised tasks, vision and RL "
+     "evaluation; about 44 minutes on one cloud machine) reproduced every result table exactly, apart from wall-clock timings. "
+     "PPO and Q-learning training was not rerun; evaluation uses the saved models.")
 para("The vision task uses the same 60,000-segment subsample and the same GroupKFold(5)-by-map outer folds as segment classification. Within each outer-training set, "
      "an inner 80/20 split by maps provides the validation data for CNN early stopping and fusion-weight selection.")
 
