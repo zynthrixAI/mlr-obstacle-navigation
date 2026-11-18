@@ -2,7 +2,7 @@
 
 Machine Learning for Robotics (Section 9A), instructor: Mr. Sudais
 
-**Group:** Syeda Hamna Uraizee (22k-5112), Ayesha Wahab (22k-5087), Hamdan (22k-5077)
+**Group:** Syeda Hamna Uraizee (22k-5112), Ayesha Wahab (22k-5087), Hamdan (22k-5077) , Abdul Basit (k226000) , Hamza Waqar (k22-5140)
 
 ## Overview
 
